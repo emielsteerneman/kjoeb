@@ -60,9 +60,8 @@ public:
     }
     void disable(){disabled = true;}
     void reset(){ frame = cv::Mat::zeros(height, width, CV_8UC3); at = 0;}
-    void add(const cv::Mat& subFrame){
-        if(disabled) return;
-        std::cout << " Adding frame " << at << std::endl;
+    void add(const cv::Mat& subFrame, std::string text = ""){
+//        std::cout << " Adding frame " << at << " | " << text << std::endl;
         if(!writer.isOpened())
             std::cout << "[VidWriter] Warning! Stream not opened" << std::endl;
         if(9 <= at)
@@ -72,8 +71,25 @@ public:
         int toHeight = (int)floor(at/3) * (height/nHeight);
         cv::Rect dstRect(toWidth, toHeight, subWidth, subHeight);
         subFrame.copyTo(frame(dstRect));
+
+        if(text != ""){
+            cv::rectangle(frame, {toWidth, toHeight, width, 24}, {0, 0, 0}, -1);
+            cv::putText(frame, text, {toWidth+5, toHeight+16}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255}, 1, cv::LINE_AA);
+        }
+
+        cv::line(frame, {toWidth, toHeight}, {toWidth + width, toHeight}, {100, 100, 100});
+        cv::line(frame, {toWidth, toHeight}, {toWidth, toHeight + height}, {100, 100, 100});
+
         at++;
     }
+
+    void show(){
+        cv::imshow("VideoWriter", frame);
+        cv::namedWindow("VideoWriter", cv::WND_PROP_FULLSCREEN);
+        cv::setWindowProperty("VideoWriter", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+        reset();
+    }
+
     void flush(){
         if(disabled) return;
         writer.write(frame);
@@ -81,9 +97,6 @@ public:
     }
 
 };
-
-
-
 
 struct ExtendedRect : cv::Rect {
     double angle;
@@ -116,10 +129,11 @@ int findRects(cv::Mat& img, std::vector<cv::Rect>& rects){
 
     for(const auto& contour : contours) {
         cv::Rect box = cv::boundingRect(contour);
-        if(500 < box.area())
+        if(1000 < box.area())
             if(inRangeRel(box.width, box.height))
                 rects.push_back(box);
     }
+    return contours.size();
 }
 
 
@@ -139,6 +153,20 @@ unsigned int root(unsigned int x){
     x     = b/x;
     x     = (x+a)>>1;
     return(x);
+}
+
+double normalizeAngle90(double angle){
+    angle *= 57.29;
+    double step = 90;
+
+    angle = fabs(angle);
+    while(step <= angle)
+        angle -= step;
+
+    if(step / 2 < angle)
+        angle -= step;
+
+    return angle / 57.29;
 }
 
 // Distance calculation without root
@@ -179,6 +207,44 @@ cv::Point rotatePointAroundPoint(cv::Point p, cv::Point center, double angle){
     int yNew = (int)(p.x * s + p.y * c);
 
     return cv::Point(xNew, yNew) + center;
+}
+
+cv::Rect getBoundingBox(const Cluster<cv::Rect> rects){
+    cv::Rect boundingBox;
+    int xMin = 999999;
+    int xMax = 0;
+    int yMin = 999999;
+    int yMax = 0;
+    for(const ExtendedRect& rect : rects){
+        xMin = std::min(xMin, rect.x);
+        xMax = std::max(xMax, rect.x + rect.width);
+        yMin = std::min(yMin, rect.y);
+        yMax = std::max(yMax, rect.y + rect.height);
+    }
+    boundingBox.x = xMin;
+    boundingBox.width = xMax - xMin;
+    boundingBox.y = yMin;
+    boundingBox.height = yMax - yMin;
+    return boundingBox;
+}
+
+cv::Rect getBoundingBox(const Cluster<ExtendedRect> rects){
+    cv::Rect boundingBox;
+    int xMin = 999999;
+    int xMax = 0;
+    int yMin = 999999;
+    int yMax = 0;
+    for(const ExtendedRect& rect : rects){
+        xMin = std::min(xMin, rect.x);
+        xMax = std::max(xMax, rect.x + rect.width);
+        yMin = std::min(yMin, rect.y);
+        yMax = std::max(yMax, rect.y + rect.height);
+    }
+    boundingBox.x = xMin;
+    boundingBox.width = xMax - xMin;
+    boundingBox.y = yMin;
+    boundingBox.height = yMax - yMin;
+    return boundingBox;
 }
 
 // ====================================================================================
@@ -253,7 +319,7 @@ void clusterRectsByArea(const std::vector<cv::Rect> &rects, SuperCluster<cv::Rec
     std::cout << "[clusterRectsByArea]     time=" << t.get() << "ms rects=" << rects.size() << " clusters=" << clusters.size() << std::endl;
 }
 
-void clusterRectsByDistance(const std::vector<cv::Rect> &rects, SuperCluster<Line> &clusters, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0){
+void clusterRectsByDistance(const Cluster<cv::Rect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0){
     Timer t;
     t.start();
 
@@ -282,7 +348,7 @@ void clusterRectsByDistance(const std::vector<cv::Rect> &rects, SuperCluster<Lin
         for(auto& cluster : clusters){
             for(const auto& lineComp : cluster){
                 if(found) break;
-                if(inRangeRel(std::get<0>(line), std::get<0>(lineComp), 0.90)){    // Should be compared with average / median instead of all.
+                if(inRangeRel(std::get<0>(line), std::get<0>(lineComp), threshold)){    // Should be compared with average / median instead of all.
                     found = true;
                     cluster.push_back(line);
                 }
@@ -412,31 +478,56 @@ int main() {
         return 0;
     }
 
+    cap.grab();
+
+    std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
+    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
+
+    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
+        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
+
+    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, 640))
+        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
+
+    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, 360))
+        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
+
+    std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
+    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
+
+
     VidWriter writer("/home/emiel/Desktop/_kjoeb.mp4", 1920, 1080, 3, 3);
-    writer.disable();
+//    writer.disable();
 
     // Set some constants
-    const int WIDTH  = (int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-    const int HEIGHT = (int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+    const int WIDTH  = 640;//(int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
+    const int HEIGHT = 360;//(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
 
     const int LINE_MAX_LENGTH = std::min(WIDTH, HEIGHT) / 3;
     const int RECT_MAX_AREA   = LINE_MAX_LENGTH * LINE_MAX_LENGTH;
 
-    cv::Mat frame, workFrame, workFrameClustering, mask;
+    cv::Mat frame, workFrame, workFrameClustering, mask, mask2;
     cv::Mat channels[3];
 
     std::vector<std::vector<cv::Point> > contours;
     std::vector<cv::Vec4i> hierarchy;
-
     std::vector<cv::Rect> rectangles;
 
-    int total_rects = 0;
-    int total_frames = 0;
+
+    int erosion_size = 1;
+    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
+            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
+            cv::Point(erosion_size, erosion_size) );
+
+
+    int nFrames = 0;
 
     for(;;){
-        std::cout << std::endl;
+        std::cout << nFrames << std::endl;
+        nFrames++;
 
-        writer.flush();
+//        writer.flush();
+        writer.show();
 
         // Grab frame
         if(cv::waitKey(10) == 27 ) break; // esc
@@ -445,71 +536,77 @@ int main() {
 //        for(int i = 0; i < 5; i++)
 //            cap.grab();
 
-        cap >> frame;
-//        frame = cv::imread("../checkers.png");
+        t.start();
+        bool isCaptured = cap.read(frame);
+        t.stop();
+        std::cout << "[capture]                time=" << t.get() << "ms" << std::endl;
 
-        if(frame.empty()) break;
+//        cv::imshow("frame", frame);
+//        continue;
+
+        if(frame.empty()){
+            std::cout << "Frame is empty! Break!" << std::endl;
+            break;
+        }
 
         // Shrink frame
-//        cv::rpaulpaulesize(frame, frame, {frame.cols * 1 / 2, frame.rows * 1 / 2});
+//        cv::resize(frame, frame, {frame.cols * 1 / 4, frame.rows * 1 / 4});
         cv::flip(frame, frame, 1);
-
-        cv::imshow("Original", frame);
-        cv::moveWindow("Original", 0, 0);
-        cv::namedWindow("Original", cv::WND_PROP_FULLSCREEN);
-        cv::setWindowProperty("Original", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-        writer.add(frame);
+        writer.add(frame, "Original Frame");
 
         frame.copyTo(workFrame);
-        cv::blur(workFrame , workFrame, {7, 7});
-
-        // Cluster colours
-        workFrame = workFrame / 64;
-        workFrame *= 64;
-
-//        cv::imshow("Colour reduction", workFrame);
-//        cv::moveWindow("Colour reduction", WIDTH/2, 0);
-//        cv::namedWindow("Colour reduction", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("Colour reduction", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrame);
+        cv::blur(workFrame , workFrame, {5, 5});
 
         // Laplacian edge detection
         t.start();
         cv::Laplacian(workFrame, workFrame, CV_8UC3, 3);
         cv::normalize(workFrame, workFrame, 0, 255, cv::NORM_MINMAX, CV_32FC1);
         cv::convertScaleAbs(workFrame, workFrame);
+//        workFrame *= 10;
+
+        // Create mask and apply
+        cv::inRange(workFrame, cv::Scalar(0, 0, 0), cv::Scalar(20, 20, 20), mask);
+        mask = 255 - mask;
+        cv::erode(mask, mask, element);
+        cv::dilate(mask, mask, element, cv::Point(), 1);
+
+        cv::Mat workFrameMasked;
+//        workFrame.copyTo(workFrameMasked, mask);
+        workFrame.copyTo(workFrameMasked);
         t.stop();
-        std::cout << "[laplacian]              time=" << t.get() << std::endl;
 
-//        cv::imshow("Border detection", workFrame);
-//        cv::moveWindow("Border detection", WIDTH, 0);
-//        cv::namedWindow("Border detection", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("Border detection", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrame);
+        writer.add(workFrameMasked, "Laplacian + mask " + std::to_string(t.get()));
+        std::cout << "[laplacian]              time=" << t.get() << "ms" << std::endl;
 
+        cv::cvtColor(mask, mask, cv::COLOR_GRAY2BGR);
+        writer.add(mask, "inRange");
 
-        cv::split(workFrame, channels);
-//        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-//        rectangles.clear();
-//        findRects(channels[0], rectangles);
-//        for(cv::Rect rect : rectangles)
-//            cv::rectangle(workFrameClustering, rect, {255, 0, 0});
-//
-//        rectangles.clear();
-//        findRects(channels[1], rectangles);
-//        for(cv::Rect rect : rectangles)
-//            cv::rectangle(workFrameClustering, rect, {0, 255, 0});
-//
-//        rectangles.clear();
-//        findRects(channels[2], rectangles);
-//        for(cv::Rect rect : rectangles)
-//            cv::rectangle(workFrameClustering, rect, {0, 0, 255});
-//
-//        cv::imshow("Squares", workFrameClustering);
-//        cv::moveWindow("Squares", 0, HEIGHT/2);
-//        cv::namedWindow("Squares", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("Squares", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrameClustering);
+        int nBoxes = 0;
+        int nRectangles = 0;
+
+        cv::split(workFrameMasked, channels);
+        if(true) {
+//            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            rectangles.clear();
+            nBoxes += findRects(channels[0], rectangles);
+            nRectangles += rectangles.size();
+            for(cv::Rect rect : rectangles)
+                cv::rectangle(workFrame, rect, {255, 0, 0});
+
+            rectangles.clear();
+            nBoxes += findRects(channels[1], rectangles);
+            nRectangles += rectangles.size();
+            for(cv::Rect rect : rectangles)
+                cv::rectangle(workFrame, rect, {0, 255, 0});
+
+            rectangles.clear();
+            nBoxes += findRects(channels[2], rectangles);
+            nRectangles += rectangles.size();
+            for(cv::Rect rect : rectangles)
+                cv::rectangle(workFrame, rect, {0, 0, 255});
+
+            writer.add(workFrame, "Rectangles | squares=" + std::to_string(nRectangles) + " boxes=" + std::to_string(nBoxes));
+        }
 
         rectangles.clear();
         findRects(channels[0], rectangles);
@@ -521,128 +618,87 @@ int main() {
         // ================================= CLUSTERING BEGIN =================================
         // ====================================================================================
         // Cluster rects by area
-        SuperCluster <cv::Rect> clusters;
-        clusterRectsByArea(rectangles, clusters);
-        if(clusters.empty())
+        SuperCluster <cv::Rect> scByArea;
+        clusterRectsByArea(rectangles, scByArea);
+        if(scByArea.empty())
             continue;
-
-        // Draw clusters
-//        for(int i = 0; i < clusters.size(); i++)
-//            for(const cv::Rect& rect : clusters[i])
-//                cv::rectangle(workFrameClustering, rect, {20, 20, 20},3);
-
-        // Draw and Analyze largest cluster
-//        cv::Scalar colours[] = {{255, 0, 0, 0.25}, {0, 255, 0, 0.25}, {0, 0, 255, 0.25}};
-//        for (const cv::Rect& rect : clusters.back())
-//            cv::rectangle(workFrameClustering, rect, {255, 255, 255}, 2);
 
         // ====================================================================================
         // Filter duplicate rects of largest cluster
-        Cluster<cv::Rect> mostCommonRects;
-        deduplicateRects(clusters.back(), mostCommonRects);
+        Cluster<cv::Rect> cByArea;
+        deduplicateRects(scByArea.back(), cByArea);
 
-        // Draw all clusters
+        // Draw all rects in scByArea
         workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-        for(const auto& cluster : clusters){
+        for(const auto& cluster : scByArea){
             for(int iRect = 0; iRect < cluster.size(); iRect++) {
                 double iColour = 50 + (200 * iRect / cluster.size());
                 cv::rectangle(workFrameClustering, cluster[iRect], {iColour, 0, iColour});
             }
         }
-
-        // Draw most common squares after deduplication
-        for (const cv::Rect& rect : mostCommonRects)
+        // Draw largest of scByArea after its deduplication
+        for (const cv::Rect& rect : cByArea)
             cv::rectangle(workFrameClustering, rect, {0, 255, 0}, 3);
 
-//        cv::imshow("clusterRectsByArea", workFrameClustering);
-//        cv::moveWindow("clusterRectsByArea", WIDTH/2, HEIGHT/2);
-//        cv::namedWindow("clusterRectsByArea", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("clusterRectsByArea", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrameClustering);
+        // sigh
+        std::string strNClusters = std::to_string(scByArea.size()); strNClusters.resize(5, ' ');
+        std::string strLargest = std::to_string(cByArea.size()); strLargest.resize(5, ' ');
+        std::string strArea = std::to_string(cByArea.front().area()); strArea.resize(5, ' ');
+        writer.add(workFrameClustering, "Rects by area | nClusters=" + strNClusters + " largest=" + strLargest + " area=" + strArea);
 
         // ====================================================================================
         // Cluster most common rects by distance
-        SuperCluster<Line> linesByDistance;
-        clusterRectsByDistance(mostCommonRects, linesByDistance, LINE_MAX_LENGTH);
-        if(linesByDistance.empty())
+        SuperCluster<Line> scByDistance;
+        clusterRectsByDistance(cByArea, scByDistance, 0.7, LINE_MAX_LENGTH);
+        if(scByDistance.empty())
             continue;
-        Cluster<Line> mostCommonLines = linesByDistance.back();
+        Cluster<Line> mostCommonLines = scByDistance.back();
 
         // ====================================================================================
         // select lines by calculating the lines-intersect ratio based on bounding box
-        int iBestLines = selectLinesByIntersectRatio(linesByDistance);
-        Cluster<Line> linesByRatio = linesByDistance[iBestLines];
+        int iBestLines = selectLinesByIntersectRatio(scByDistance);
+        Cluster<Line> linesByRatio = scByDistance[iBestLines];
 
         // === Draw all squares, lines, and selected lines ===
-        // Draw most common squares after deduplication
-//        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-//        for (const cv::Rect& rect : mostCommonRects)
-//            cv::rectangle(workFrameClustering, rect, {255, 255, 255}, 3);
-//        // Draw lines
-//        for(int iCluster = 0; iCluster < linesByDistance.size(); iCluster++) {
-//            const Cluster<Line>& lineCluster = linesByDistance[iCluster];
-//            double iColour = 50 + (200 * iCluster / linesByDistance.size());
-//            for (const Line &line : lineCluster) {
-//                const cv::Rect &r1 = std::get<1>(line);
-//                const cv::Rect &r2 = std::get<2>(line);
-//                cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-//                cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-//                cv::line(workFrameClustering, p1, p2, {iColour, 0, iColour}, 1);
-//            }
-//        }
-//        // Draw selected lines
-//        {
-//            for (const Line &line : linesByRatio) {
-//                const cv::Rect &r1 = std::get<1>(line);
-//                const cv::Rect &r2 = std::get<2>(line);
-//                cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-//                cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-//                cv::line(workFrameClustering, p1, p2, {0, 255, 0}, 3);
-//            }
-//        }
-//        cv::imshow("selectLinesByIntersectRatio", workFrameClustering);
-//        cv::moveWindow("selectLinesByIntersectRatio", WIDTH, HEIGHT/2);
-//        cv::namedWindow("selectLinesByIntersectRatio", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("selectLinesByIntersectRatio", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrameClustering);
+        if(true) {
+            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            // Draw most common squares after deduplication
+            for (const cv::Rect& rect : cByArea)
+                cv::rectangle(workFrameClustering, rect, {255, 255, 255}, 3);
+            // Draw all lines
+            for(int iCluster = 0; iCluster < scByDistance.size(); iCluster++) {
+                const Cluster<Line>& lineCluster = scByDistance[iCluster];
+                double iColour = 50 + (200 * iCluster / scByDistance.size());
+                for (const Line &line : lineCluster) {
+                    const cv::Rect &r1 = std::get<1>(line);
+                    const cv::Rect &r2 = std::get<2>(line);
+                    cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
+                    cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
+                    cv::line(workFrameClustering, p1, p2, {iColour, 0, iColour}, 1);
+                }
+            }
+        }
 
         // ====================================================================================
         // Cluster lines by angle
         SuperCluster<Line> linesByAngle;
         clusterLinesByAngle(linesByRatio, linesByAngle);
-
         Cluster<Line> bestLines = linesByAngle.back();
 
-
-//         === Draw all squares, lines, and selected lines ===
-//         Draw most common squares after deduplication
-//        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-//        // Draw lines
-//        {
-//            for (const Line &line : linesByRatio) {
-//                const cv::Rect &r1 = std::get<1>(line);
-//                const cv::Rect &r2 = std::get<2>(line);
-//                cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-//                cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-//                cv::line(workFrameClustering, p1, p2, {255, 255, 255}, 3);
-//            }
-//        }
-//        // Draw selected lines
-//        for (const Line &line : bestLines) {
-//            const cv::Rect &r1 = std::get<1>(line);
-//            const cv::Rect &r2 = std::get<2>(line);
-//            cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-//            cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-//            cv::rectangle(workFrameClustering, r1, {0, 255, 0}, 3);
-//            cv::rectangle(workFrameClustering, r2, {0, 255, 0}, 3);
-//            cv::line(workFrameClustering, p1, p2, {0, 255, 0}, 3);
-//        }
-//        cv::imshow("clusterLinesByAngle", workFrameClustering);
-//        cv::moveWindow("clusterLinesByAngle", 0, HEIGHT);
-//        cv::namedWindow("clusterLinesByAngle", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("clusterLinesByAngle", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrameClustering);
-
+//      === Draw all squares, lines, and selected lines ===
+        if(true) {
+            // Draw selected lines
+            for (const Line &line : bestLines) {
+                const cv::Rect &r1 = std::get<1>(line);
+                const cv::Rect &r2 = std::get<2>(line);
+                cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
+                cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
+                cv::rectangle(workFrameClustering, r1, {0, 255, 0}, 3);
+                cv::rectangle(workFrameClustering, r2, {0, 255, 0}, 3);
+                cv::line(workFrameClustering, p1, p2, {0, 255, 0}, 3);
+            }
+            writer.add(workFrameClustering, "Lines by ratio and angle |  scAngle=" + std::to_string(linesByAngle.size()) + " nLines=" + std::to_string(bestLines.size()));
+        }
 
 
         // ====================================================================================
@@ -656,6 +712,7 @@ int main() {
         }
         t.stop();
         std::cout << "[averageRectSize]        time=" << t.get() << " size=" << avgRectSize << std::endl;
+
 
         // ====================================================================================
         // Get distinct squares and average rect size from the selected lines
@@ -681,87 +738,77 @@ int main() {
             std::cout << "[LinesToDistinctRects]   time=" << t.get() << "ms " << (bestLines.size() * 2) << " -> " << distinctRects.size() << std::endl;
         }
 
+
         // ====================================================================================
         // Get bounding box of all the distinct rects
-        cv::Rect boundingBox;
-        if(!distinctRects.empty()){
-            int xMin = frame.cols;
-            int xMax = 0;
-            int yMin = frame.rows;
-            int yMax = 0;
-            for(const ExtendedRect& rect : distinctRects){
-                xMin = std::min(xMin, rect.x);
-                xMax = std::max(xMax, rect.x + rect.width);
-                yMin = std::min(yMin, rect.y);
-                yMax = std::max(yMax, rect.y + rect.height);
-            }
-            boundingBox.x = xMin;
-            boundingBox.width = xMax - xMin;
-            boundingBox.y = yMin;
-            boundingBox.height = yMax - yMin;
-            std::cout << "[BoundingBox]            xMin=" << xMin << " xMax=" << xMax << " yMin=" << yMin << " yMax=" << yMax << std::endl;
-        }
-
+        cv::Rect boundingBox = getBoundingBox(distinctRects);
 
         // Draw distinct squares and bounding box
         if(!distinctRects.empty()) {
-            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
             for (const ExtendedRect &rect : distinctRects)
                 DrawRotatedRectangle(workFrameClustering, rect);
-            cv::rectangle(workFrameClustering, boundingBox, {255, 255, 255}, 3);
+            cv::rectangle(workFrameClustering, boundingBox, {255}, 3);
         }
-//        cv::imshow("DistinctSquares", workFrameClustering);
-//        cv::moveWindow("DistinctSquares", WIDTH/2, HEIGHT);
-//        cv::namedWindow("DistinctSquares", cv::WND_PROP_FULLSCREEN);
-//        cv::setWindowProperty("DistinctSquares", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        writer.add(workFrameClustering);
-
 
 //        cv::cvtColor(workFrameClustering, workFrameClustering, cv::COLOR_BGR2GRAY);
         workFrame.copyTo(frame, workFrameClustering);
-        cv::imshow("Result", frame);
-        cv::moveWindow("Result", WIDTH/2, 0);
-        cv::namedWindow("Result", cv::WND_PROP_FULLSCREEN);
-        cv::setWindowProperty("Result", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
         writer.add(frame);
+
 
 
 
         // ====================================================================================
         // Rotate all squares around the center of the bounding box
+        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+        int gridWidth = 0;
+        int gridHeight = 0;
+
+
         if(!distinctRects.empty()){
             Cluster<cv::Rect> rotatedRects;
-
-//            cv::Point center(boundingBox.x + boundingBox.width, boundingBox.y + boundingBox.height);
-            cv::Point center(frame.cols / 2, frame.rows/2);
-            double angle = -distinctRects.front().angle; // Just grab the first angle, should work fine;
-            cv::Size size(avgRectSize, avgRectSize);
+            // Rotate around center of bounding box
+            cv::Point center(boundingBox.x + boundingBox.width / 2, boundingBox.y + boundingBox.height / 2);
+            // Just grab the first angle, should work fine;
+            double angleNorm = normalizeAngle90(-distinctRects.front().angle);
+            cv::Size size((int)avgRectSize, (int)avgRectSize);
 
             for(const ExtendedRect& rect : distinctRects){
-                cv::Point newPoint = rotatePointAroundPoint(rect.tl(), center, angle);
+                cv::Point newPoint = rotatePointAroundPoint(rect.tl(), center, -angleNorm);
                 rotatedRects.emplace_back(newPoint, size);
             }
 
-            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-            for (const cv::Rect& rect : rotatedRects)
+            // Put in bounding box, fix offset
+            cv::Rect box = getBoundingBox(rotatedRects);
+            int xOffset = frame.cols/4 - box.x;
+            int yOffset = frame.rows/4 - box.y;
+            box.x += xOffset;
+            box.y += yOffset;
+            for (cv::Rect& rect : rotatedRects) {
+                rect.x += xOffset;
+                rect.y += yOffset;
                 cv::rectangle(workFrameClustering, rect, {0, 255, 0}, 3);
-            cv::rectangle(workFrameClustering, boundingBox, {255, 255, 255}, 3);
+            }
+            cv::rectangle(workFrameClustering, box, {0, 0, 255}, 3);
+
+            // Place on grid
+            for (cv::Rect& rect : rotatedRects) {
+                int dx = (int)round((rect.x - box.x) / avgRectSize);
+                int dy = (int)round((rect.y - box.y) / avgRectSize);
+                int x = box.x + (int)(dx * avgRectSize);
+                int y = box.y + (int)(dy * avgRectSize);
+                gridWidth  = std::max(dx+1, gridWidth);
+                gridHeight = std::max(dy+1, gridHeight);
+
+                cv::Rect dRect(x, y, avgRectSize, avgRectSize);
+                cv::rectangle(workFrameClustering, dRect, {255, 0, 0}, 1);
+            }
+
         }
 
-        cv::imshow("RotatedSquares", workFrameClustering);
-        cv::moveWindow("RotatedSquares", WIDTH*3/2, 0);
-        cv::namedWindow("RotatedSquares", cv::WND_PROP_FULLSCREEN);
-        cv::setWindowProperty("RotatedSquares", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-        writer.add(workFrameClustering);
-
-
-
-
-
+        writer.add(workFrameClustering, "Rects rotated | grid=" + std::to_string(gridWidth) + "x" + std::to_string(gridHeight));
 
         std::cout << std::endl;
-        continue;
-
 
     }
 
