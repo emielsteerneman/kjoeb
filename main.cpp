@@ -6,7 +6,9 @@
 #include <numeric>
 #include <limits>
 
-const int CUBE_SIZE = 3;
+const int CUBE_SIZE = 5;
+const int FRAME_WIDTH = 640;
+const int FRAME_HEIGHT = 360;
 
 // Generate a checkered pattern for performance testing
 void g(){
@@ -135,7 +137,7 @@ bool inRangeAbs(double a, double b, double c){
     return fabs(a-b) <= c;
 }
 
-int findRects(cv::Mat& img, std::vector<cv::Rect>& rects){
+int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int maxArea = 999999){
     std::vector<std::vector<cv::Point> > contours;
     std::vector<cv::Vec4i> hierarchy;
 
@@ -143,7 +145,7 @@ int findRects(cv::Mat& img, std::vector<cv::Rect>& rects){
 
     for(const auto& contour : contours) {
         cv::Rect box = cv::boundingRect(contour);
-        if(500 < box.area())
+        if(minArea <= box.area() && box.area() <= maxArea)
             if(inRangeRel(box.width, box.height))
                 rects.push_back(box);
     }
@@ -454,7 +456,7 @@ void deduplicateRects(const std::vector<cv::Rect> &in, std::vector<cv::Rect>& ou
         bool found = false;
         for(const cv::Rect& rectComp : out){
             double dist = calcDistance(rect, rectComp);
-            if(dist < 0.75 * rect.area()) {
+            if(dist < 0.25 * rect.area()) {
                 found = true;
                 break;
             }
@@ -515,31 +517,33 @@ int main() {
     cap.grab();
 
     // Set some constants
-    const int WIDTH  = 640;//(int)cap.get(cv::CAP_PROP_FRAME_WIDTH);
-    const int HEIGHT = 360;//(int)cap.get(cv::CAP_PROP_FRAME_HEIGHT);
 
-    // 1920x1080 -> 5000 < area
-    // 1280x720  -> 2000 < area
+    // 1920x1080 -> 5000 < area  70
+    // 1280x720  -> 2000 < area  45
 
-    const int LINE_MAX_LENGTH = std::min(WIDTH, HEIGHT) / 3;
+    const int LINE_MAX_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / CUBE_SIZE;
+    const int LINE_MIN_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / 20;
     const int RECT_MAX_AREA   = LINE_MAX_LENGTH * LINE_MAX_LENGTH;
-
+    const int RECT_MIN_AREA   = LINE_MIN_LENGTH * LINE_MIN_LENGTH;
 
     std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
     std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
     std::cout << "CAP_PROP_FPS          " << cap.get(cv::CAP_PROP_FPS) << std::endl;
 
-    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
-        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
-
-    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, WIDTH))
-        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
-
-    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, HEIGHT))
-        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
+//    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
+//        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
+//
+//    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, WIDTH))
+//        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
+//
+//    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, HEIGHT))
+//        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
 
 //    if(!cap.set(cv::CAP_PROP_FPS, 30))
 //        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
+
+    std::cout << "RECT_MIN_AREA         " << RECT_MIN_AREA << std::endl;
+    std::cout << "RECT_MAX_AREA         " << RECT_MAX_AREA << std::endl;
 
     cv::Mat frame, frame_og, workFrame, workFrameClustering, mask, mask2;
     cv::Mat channels[3];
@@ -554,7 +558,7 @@ int main() {
             cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
             cv::Point(erosion_size, erosion_size) );
 
-    VidWriter writer("/home/emiel/Desktop/_kjoeb.mp4", 1280, 720, 3, 3, FPS);
+    VidWriter writer("/home/emiel/Desktop/__kjoeb.mp4", 1280, 720, 3, 3, FPS);
 //    writer.disable();
 
     int nFrames = 0;
@@ -564,8 +568,8 @@ int main() {
         nFrames++;
 
         writer.show();
+        writer.flush();
         writer.reset();
-//        writer.flush();
 
 //        if(1000 < nFrames)
 //            break;
@@ -590,7 +594,7 @@ int main() {
         }
 
         // Shrink frame
-//        cv::resize(frame, frame, {frame.cols * 1 / 4, frame.rows * 1 / 4});
+        cv::resize(frame, frame, {FRAME_WIDTH, FRAME_HEIGHT});
 //        cv::flip(frame, frame, 1);
         writer.add(frame, "Original Frame " + std::to_string(nFrames));
 
@@ -608,7 +612,7 @@ int main() {
         cv::inRange(workFrame, cv::Scalar(0, 0, 0), cv::Scalar(20, 20, 20), mask);
         mask = 255 - mask;
 //        cv::erode(mask, mask, element);
-        cv::dilate(mask, mask, element, cv::Point(), 3);
+        cv::dilate(mask, mask, element, cv::Point(), 1);
 
         cv::Mat workFrameMasked;
         workFrame.copyTo(workFrameMasked, mask);
@@ -628,19 +632,19 @@ int main() {
         if(true) {
 //            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
             rectangles.clear();
-            nBoxes += findRects(channels[0], rectangles);
+            nBoxes += findRects(channels[0], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
             nRectangles += rectangles.size();
             for(cv::Rect rect : rectangles)
                 cv::rectangle(workFrameMasked, rect, {255, 0, 0});
 
             rectangles.clear();
-            nBoxes += findRects(channels[1], rectangles);
+            nBoxes += findRects(channels[1], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
             nRectangles += rectangles.size();
             for(cv::Rect rect : rectangles)
                 cv::rectangle(workFrameMasked, rect, {0, 255, 0});
 
             rectangles.clear();
-            nBoxes += findRects(channels[2], rectangles);
+            nBoxes += findRects(channels[2], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
             nRectangles += rectangles.size();
             for(cv::Rect rect : rectangles)
                 cv::rectangle(workFrameMasked, rect, {0, 0, 255});
@@ -652,9 +656,9 @@ int main() {
         t.start();
         rectangles.clear();
         int nContours = 0;
-        nContours += findRects(channels[0], rectangles);
-        nContours += findRects(channels[1], rectangles);
-        nContours += findRects(channels[2], rectangles);
+        nContours += findRects(channels[0], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
+        nContours += findRects(channels[1], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
+        nContours += findRects(channels[2], rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
         t.stop();
         std::cout << "[findRectangles]         time=" << t.get() << "ms nContours=" << nContours << " nRects" << rectangles.size() << std::endl;
 
@@ -692,7 +696,7 @@ int main() {
             int varx = variance(x) / 100;
             int vary = variance(y) / 100;
             int score = (varx * vary) / cluster.size();
-            if(score < bestScore){
+            if(0 < score && score < bestScore){
                 bestScore = score;
                 iBestCluster = i;
             }
@@ -719,10 +723,11 @@ int main() {
             cv::rectangle(workFrameClustering, rect, {0, 255, 0}, 3);
 
         // sigh
+        std::string strIBestCluster = std::to_string(iBestCluster); strIBestCluster.resize(3, ' ');
         std::string strNClusters = std::to_string(scByArea.size()); strNClusters.resize(3, ' ');
         std::string strScore = std::to_string(bestScore); strScore.resize(3, ' ');
         std::string strArea = std::to_string(cByArea.front().area()); strArea.resize(3, ' ');
-        writer.add(workFrameClustering, "Rects by area | nC=" + strNClusters + " score=" + strScore + " area=" + strArea);
+        writer.add(workFrameClustering, "Rects by area | i=" + strIBestCluster + " nC=" + strNClusters + " score=" + strScore + " area=" + strArea);
 
 //        cv::imshow("chosen", workFrameClustering);
 
@@ -733,7 +738,7 @@ int main() {
             if(100 < scByArea[i].size())
                 continue;
 
-            int factor = 4;
+            int factor = 1;
             workFrameClustering = cv::Mat::zeros(frame.rows/factor, frame.cols/factor, CV_8UC3);
             std::vector<int> x;
             std::vector<int> y;
@@ -746,8 +751,8 @@ int main() {
                 cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
                 cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
             }
-            int varx = variance(x) / 1000;
-            int vary = variance(y) / 1000;
+            int varx = variance(x) / 100;
+            int vary = variance(y) / 100;
             int score = (varx * vary) / scByArea[i].size();
             std::string s = "";
             s += "by area " + std::to_string(i);
@@ -758,8 +763,10 @@ int main() {
 //            cv::putText(workFrameClustering, s, {10, 10}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 0, 0});
             cv::imshow(s, workFrameClustering);
         }
-            cv::waitKey(0);
+            writer.show();
+            if(cv::waitKey(0) == 27 ) break; // esc
             cv::destroyAllWindows();
+            continue;
         }
 
 //        continue;
@@ -827,6 +834,7 @@ int main() {
             // Friendly reminder that line lengths are stored without sqrt!
             for(const Line &line : bestLines) avgRectSize += sqrt(std::get<0>(line));
             avgRectSize /= bestLines.size();
+            avgRectSize *= 2;
         }
         t.stop();
         std::cout << "[averageRectSize]        time=" << t.get() << " size=" << avgRectSize << std::endl;
