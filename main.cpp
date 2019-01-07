@@ -5,6 +5,7 @@
 #include <tuple>
 #include <numeric>
 #include <limits>
+#include "maths.h"
 
 const int CUBE_SIZE = 5;
 const int FRAME_WIDTH = 640;
@@ -128,14 +129,6 @@ using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
 template<class T> using Cluster = std::vector<T>;
 template<class T> using SuperCluster = std::vector<std::vector<T>>;
 
-// TODO What if either a of b equals 0
-bool inRangeRel(double a, double b, double c = 0.85){
-    return c < a/b && c < b/a;
-}
-
-bool inRangeAbs(double a, double b, double c){
-    return fabs(a-b) <= c;
-}
 
 int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int maxArea = 999999){
     std::vector<std::vector<cv::Point> > contours;
@@ -146,7 +139,7 @@ int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int m
     for(const auto& contour : contours) {
         cv::Rect box = cv::boundingRect(contour);
         if(minArea <= box.area() && box.area() <= maxArea)
-            if(inRangeRel(box.width, box.height))
+            if(maths::inRangeRel(box.width, box.height))
                 rects.push_back(box);
     }
     return contours.size();
@@ -157,79 +150,8 @@ int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int m
 // ==================================== EPIC MATHS ====================================
 // ====================================================================================
 
-double average(const std::vector<int>& vec){
-    int sum = 0;
-    for(int i = 0; i < vec.size(); i++)
-        sum += vec[i];
-    return sum / (double)vec.size();
-}
 
-double variance(const std::vector<int>& vec){
-    double avg = average(vec);
-    double sum = 0.0;
-    for(int i = 0; i < vec.size(); i++)
-        sum += std::pow(vec[i] - avg, 2);
-    return sum / (double)(vec.size() - 2);
 
-}
-
-//http://supp.iar.com/FilesPublic/SUPPORT/000419/AN-G-002.pdf
-unsigned int root(unsigned int x){
-    unsigned int a,b;
-    b     = x;
-    a = x = 0x3f;
-    x     = b/x;
-    a = x = (x+a)>>1;
-    x     = b/x;
-    a = x = (x+a)>>1;
-    x     = b/x;
-    x     = (x+a)>>1;
-    return(x);
-}
-
-double normalizeAngle90(double angle){
-    angle *= 57.29;
-    double step = 90;
-
-    angle = fabs(angle);
-    while(step <= angle)
-        angle -= step;
-
-    if(step / 2 < angle)
-        angle -= step;
-
-    return angle / 57.29;
-}
-
-// Distance calculation without root
-int calcDistance(const cv::Rect &r1, const cv::Rect &r2){
-    int dx = r1.x - r2.x;
-    int dy = r1.y - r2.y;
-    return dx * dx + dy * dy;
-}
-
-double distanceCorrect(const cv::Rect& r1, const cv::Rect& r2){
-    return sqrt(calcDistance(r1, r2));
-}
-
-bool calcRectsIntersect(const cv::Rect& r1, const cv::Rect& r2){
-    return r1.x < (r2.x + r2.width)
-        && r2.x < (r1.x + r1.width)
-        && r1.y < (r2.y + r2.height)
-        && r2.y < (r1.y + r1.height);
-}
-
-bool calcRectsIntersect(const cv::Point& a11, const cv::Point& a12, const cv::Point& b11, const cv::Point& b12){
-    return calcRectsIntersect({a11, a12}, {b11, b12});
-}
-
-bool calcRectsIntersect(const cv::Rect& r11, const cv::Rect& r12, const cv::Rect& r21, const cv::Rect& r22){
-    return calcRectsIntersect(r11.tl(), r12.tl(), r21.tl(), r22.tl());
-}
-
-bool calcLinesIntersect(const Line& l1, const Line& l2){
-    return calcRectsIntersect(std::get<1>(l1), std::get<2>(l1), std::get<1>(l2), std::get<2>(l2));
-}
 
 cv::Point rotatePointAroundPoint(cv::Point p, cv::Point center, double angle){
     double s = std::sin(angle);
@@ -307,7 +229,7 @@ int selectLinesByIntersectRatio(const SuperCluster<Line> lineClusters){
         // Compare each line with eachother, increment intersections if needed
         for (int iLine = 0; iLine < cluster.size(); iLine++)
             for (int jLine = iLine + 1; jLine < cluster.size(); jLine++)
-                if(calcLinesIntersect(cluster[iLine], cluster[jLine]))
+                if(maths::intersect(cluster[iLine], cluster[jLine]))
                     iIntersections++;
         // +0.5 to compensate for cluster/0 vs cluster/1
         double ratio = iIntersections == 0 ? cluster.size() + 0.5 : cluster.size() / (float)iIntersections;
@@ -333,7 +255,7 @@ void clusterRectsByArea(const std::vector<cv::Rect> &rects, SuperCluster<cv::Rec
         for(auto& cluster : clusters){
             for(const auto& rectComp : cluster){
                 if(found) break;
-                if(inRangeRel(rect.area(), rectComp.area(), 0.90)){    // Should be compared with average / median instead of all.
+                if(maths::inRangeRel(rect.area(), rectComp.area(), 0.90)){    // Should be compared with average / median instead of all.
                     found = true;
                     cluster.push_back(rect);
                 }
@@ -361,11 +283,11 @@ void clusterRectsByDistance(const Cluster<cv::Rect> &rects, SuperCluster<Line> &
     std::vector<Line> lines;
     for(int iRect = 0; iRect < rects.size(); iRect++) {
         for (int jRect = iRect + 1; jRect < rects.size(); jRect++) {
-            int distance = calcDistance(rects[iRect], rects[jRect]);
+            int distance = maths::distance(rects[iRect], rects[jRect]);
             if(min <= distance && distance <= max) {
                 double angle = std::atan2(rects[iRect].y - rects[jRect].y, rects[iRect].x - rects[jRect].x);
                 lines.emplace_back(std::forward_as_tuple(
-                        calcDistance(rects[iRect], rects[jRect]),
+                        maths::distance(rects[iRect], rects[jRect]),
                         rects[iRect],
                         rects[jRect],
                         angle
@@ -380,7 +302,7 @@ void clusterRectsByDistance(const Cluster<cv::Rect> &rects, SuperCluster<Line> &
         for(auto& cluster : clusters){
             for(const auto& lineComp : cluster){
                 if(found) break;
-                if(inRangeRel(std::get<0>(line), std::get<0>(lineComp), threshold)){    // Should be compared with average / median instead of all.
+                if(maths::inRangeRel(std::get<0>(line), std::get<0>(lineComp), threshold)){    // Should be compared with average / median instead of all.
                     found = true;
                     cluster.push_back(line);
                 }
@@ -420,11 +342,11 @@ void clusterLinesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &cluster
                 double a2 = std::atan2(l2r1.y - l2r2.y, l2r1.x - l2r2.x);
 
                 double angle = fabs(a1-a2);
-                bool isInRange = inRangeAbs(angle, 0, pi_threshold)
-                        || inRangeAbs(angle, pi_step * 1, pi_threshold)
-                        || inRangeAbs(angle, pi_step * 2, pi_threshold)
-                        || inRangeAbs(angle, pi_step * 3, pi_threshold)
-                        || inRangeAbs(angle, pi_step * 4, pi_threshold);
+                bool isInRange = maths::inRangeAbs(angle, 0, pi_threshold)
+                        || maths::inRangeAbs(angle, pi_step * 1, pi_threshold)
+                        || maths::inRangeAbs(angle, pi_step * 2, pi_threshold)
+                        || maths::inRangeAbs(angle, pi_step * 3, pi_threshold)
+                        || maths::inRangeAbs(angle, pi_step * 4, pi_threshold);
 
 //                std::cout << a1 << " | " << a2 << " | " << angle << " | " << isInRange << std::endl;
 
@@ -455,7 +377,7 @@ void deduplicateRects(const std::vector<cv::Rect> &in, std::vector<cv::Rect>& ou
     for(const cv::Rect& rect : in){
         bool found = false;
         for(const cv::Rect& rectComp : out){
-            double dist = calcDistance(rect, rectComp);
+            double dist = maths::distance(rect, rectComp);
             if(dist < 0.25 * rect.area()) {
                 found = true;
                 break;
@@ -574,7 +496,7 @@ int main() {
 //        if(1000 < nFrames)
 //            break;
 
-        // Grab frame
+        // Grab frames
         if(cv::waitKey(10) == 27 ) break; // esc
 //        cv::destroyAllWindows();
 
@@ -693,8 +615,8 @@ int main() {
                 x.emplace_back(rect.x);
                 y.emplace_back(rect.y);
             }
-            int varx = variance(x) / 100;
-            int vary = variance(y) / 100;
+            int varx = maths::variance(x) / 100;
+            int vary = maths::variance(y) / 100;
             int score = (varx * vary) / cluster.size();
             if(0 < score && score < bestScore){
                 bestScore = score;
@@ -751,8 +673,8 @@ int main() {
                 cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
                 cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
             }
-            int varx = variance(x) / 100;
-            int vary = variance(y) / 100;
+            int varx = maths::variance(x) / 100;
+            int vary = maths::variance(y) / 100;
             int score = (varx * vary) / scByArea[i].size();
             std::string s = "";
             s += "by area " + std::to_string(i);
@@ -898,7 +820,7 @@ int main() {
             cv::Point center(boundingBox.x + boundingBox.width / 2, boundingBox.y + boundingBox.height / 2);
             // Rotate all the rectangles around the center of this bounding box
             // Just grab the first angle, should work fine;
-            double angleNorm = normalizeAngle90(-distinctRects.front().angle);
+            double angleNorm = maths::normalizeAngle90(-distinctRects.front().angle);
             cv::Size size((int)avgRectSize, (int)avgRectSize);
 
             Cluster<cv::Rect> rotatedRects;
