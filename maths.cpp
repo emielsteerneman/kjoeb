@@ -53,17 +53,20 @@ namespace maths {
     }
 
     double normalizeAngle90(double angle){
-        angle *= 57.29;
-        double step = 90;
+//        angle *= 57.29;
+        double step = M_PI / 4.0;
 
-        angle = fabs(angle);
+//        angle = fabs(angle);
+        while(angle < 0.0)
+            angle += M_PI;
+
         while(step <= angle)
             angle -= step;
 
         if(step / 2 < angle)
             angle -= step;
 
-        return angle / 57.29;
+        return angle;
     }
 
 

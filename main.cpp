@@ -78,11 +78,11 @@ public:
 //        std::cout << " Adding frame " << at << " | " << text << std::endl;
         if(!writer.isOpened())
             std::cout << "[VidWriter] Warning! Stream not opened" << std::endl;
-        if(9 <= at)
+        if(nWidth * nHeight <= at)
             std::cout << "[VidWriter] Warning! at=" << at << std::endl;
 
-        int toWidth = (at % 3) * (width/nWidth);
-        int toHeight = (int)floor(at/3) * (height/nHeight);
+        int toWidth = (at % nWidth) * (width/nWidth);
+        int toHeight = (int)floor(at/nHeight) * (height/nHeight);
         cv::Rect dstRect(toWidth, toHeight, subWidth, subHeight);
         workFrame.copyTo(frame(dstRect));
 
@@ -123,8 +123,6 @@ struct ExtendedRect : cv::Rect {
 };
 
 using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
-
-
 
 template<class T> using Cluster = std::vector<T>;
 template<class T> using SuperCluster = std::vector<std::vector<T>>;
@@ -426,7 +424,7 @@ void DrawRotatedRectangle(cv::Mat& image, const ExtendedRect& rect){
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
-    std::cout << std::setprecision(2) << std::fixed;
+    std::cout << std::setprecision(3) << std::fixed;
 
     const int FPS = 5;
 
@@ -441,12 +439,8 @@ int main() {
 
     cap.grab();
 
-    // Set some constants
-    // 1920x1080 -> 5000 < area  70
-    // 1280x720  -> 2000 < area  45
-
     const int LINE_MAX_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / CUBE_SIZE;
-    const int LINE_MIN_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / 20;
+    const int LINE_MIN_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / (CUBE_SIZE * 4);
     const int RECT_MAX_AREA   = LINE_MAX_LENGTH * LINE_MAX_LENGTH;
     const int RECT_MIN_AREA   = LINE_MIN_LENGTH * LINE_MIN_LENGTH;
 
@@ -463,8 +457,8 @@ int main() {
     if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT))
         std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
 
-    if(!cap.set(cv::CAP_PROP_FPS, 30))
-        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
+//    if(!cap.set(cv::CAP_PROP_FPS, 60))
+//        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
 
     std::cout << "RECT_MIN_AREA         " << RECT_MIN_AREA << std::endl;
     std::cout << "RECT_MAX_AREA         " << RECT_MAX_AREA << std::endl;
@@ -476,13 +470,12 @@ int main() {
     std::vector<cv::Vec4i> hierarchy;
     std::vector<cv::Rect> rectangles;
 
+//    int erosion_size = 1;
+//    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
+//            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
+//            cv::Point(erosion_size, erosion_size) );
 
-    int erosion_size = 1;
-    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
-            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
-            cv::Point(erosion_size, erosion_size) );
-
-    VidWriter writer("/home/emiel/Desktop/__kjoeb.mp4", 1920, 1080, 3, 3, FPS);
+    VidWriter writer("/home/emiel/Desktop/__kjoeb.mp4", 1600, 900, 3, 3, FPS);
 //    writer.disable();
 
     int nFrames = 0;
@@ -494,7 +487,7 @@ int main() {
         nFrames++;
 
         writer.show();
-//        writer.flush();
+        writer.flush();
         writer.reset();
 
         if(cv::waitKey(10) == 27 ) break; // esc
@@ -579,9 +572,10 @@ int main() {
                 x.emplace_back(rect.x);
                 y.emplace_back(rect.y);
             }
-            int varx = maths::variance(x) / 100;
-            int vary = maths::variance(y) / 100;
+            int varx = maths::variance(x) / 10;
+            int vary = maths::variance(y) / 10;
             int score = (varx * vary) / cluster.size();
+
             if(0 < score && score < bestScore){
                 bestScore = score;
                 iBestCluster = i;
@@ -611,9 +605,9 @@ int main() {
         // sigh
         std::string strIBestCluster = std::to_string(iBestCluster); strIBestCluster.resize(3, ' ');
         std::string strNClusters = std::to_string(scByArea.size()); strNClusters.resize(3, ' ');
-        std::string strScore = std::to_string(bestScore); strScore.resize(3, ' ');
+        std::string strScore = std::to_string(bestScore); strScore.resize(4, ' ');
         std::string strArea = std::to_string(cByArea.front().area()); strArea.resize(3, ' ');
-        writer.add(workFrameClustering, "Rects by area | i=" + strIBestCluster + " nC=" + strNClusters + " score=" + strScore + " area=" + strArea);
+        writer.add(workFrameClustering, "By area | i=" + strIBestCluster + " nC=" + strNClusters + " score=" + strScore + " area=" + strArea);
 
 //        cv::imshow("chosen", workFrameClustering);
 
@@ -637,8 +631,8 @@ int main() {
                 cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
                 cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
             }
-            int varx = maths::variance(x) / 100;
-            int vary = maths::variance(y) / 100;
+            int varx = maths::variance(x) / 10;
+            int vary = maths::variance(y) / 10;
             int score = (varx * vary) / scByArea[i].size();
             std::string s = "";
             s += "by area " + std::to_string(i);
@@ -814,10 +808,15 @@ int main() {
 
             // Calculate avg angle
             double avgAngle = 0.0;
-            for(const ExtendedRect& rect : distinctRects)
-                avgAngle += maths::normalizeAngle90(rect.angle);
+            double angleOffset = distinctRects.front().angle;
+            for(const ExtendedRect& rect : distinctRects) {
+                std::cout << ((rect.angle-angleOffset)) << " -> " << (maths::normalizeAngle90(rect.angle-angleOffset)) << std::endl;
+                avgAngle += maths::normalizeAngle90(rect.angle - angleOffset);
+            }
             avgAngle /= distinctRects.size();
+            avgAngle += angleOffset;
             angleNorm = avgAngle;
+            rotationAngle = avgAngle;
 
 
             Cluster<cv::Rect> rotatedRects;
@@ -895,7 +894,7 @@ int main() {
             }
         }
 
-        writer.add(workFrameClustering, "Rects rotated | grid=" + std::to_string(gridWidth) + "x" + std::to_string(gridHeight) + " score=" + std::to_string(bestScore));
+        writer.add(workFrameClustering, "Rects rotated | grid=" + std::to_string(gridWidth) + "x" + std::to_string(gridHeight) + " score=" + std::to_string(bestScore) + " angle=" + std::to_string(rotationAngle));
         writer.add(frame);
 
         if(CUBE_SIZE * CUBE_SIZE - CUBE_SIZE <= bestScore){
