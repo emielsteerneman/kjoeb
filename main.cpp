@@ -1,5 +1,7 @@
-#include <iostream>
+#include "utils.h"
+#include "clustering.h"
 
+#include <iostream>
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <tuple>
@@ -37,95 +39,6 @@ void g(){
 // ================================ IMPRESSIVE LOGGING ================================
 // ====================================================================================
 
-class Timer {
-    std::chrono::steady_clock::time_point t_begin;
-    std::chrono::steady_clock::time_point t_end;
-public:
-    Timer(){};
-    void start(){ t_begin = std::chrono::steady_clock::now(); }
-    void stop() { t_end   = std::chrono::steady_clock::now(); }
-    double get(){ return std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_begin).count() / 1000.0; }
-};
-
-class VidWriter{
-    int width, height, nWidth, nHeight;
-    int subWidth, subHeight, at;
-    int fps;
-    cv::VideoWriter writer;
-    cv::Mat frame, workFrame;
-    bool disabled = false;
-public:
-    VidWriter(std::string filename, int w, int h, int nW, int nH, int fps)
-        : width(w), height(h), nWidth(nW), nHeight(nH), fps(fps) {
-        subWidth = width / nWidth;
-        subHeight = height / nHeight;
-        bool writerOpened = writer.open(filename, cv::VideoWriter::fourcc('a', 'v', 'c', '1'), fps, {w, h}, true);
-        if(!writerOpened)
-            std::cout << "[VidWriter] Warning! Could not open stream!" << std::endl;
-        frame = cv::Mat::zeros(height, width, CV_8UC3);
-        reset();
-    }
-    void disable(){disabled = true;}
-    void reset(){ /*frame = cv::Mat::zeros(height, width, CV_8UC3);*/ at = 0;}
-    void add(const cv::Mat& subFrame, std::string text = ""){
-        if(disabled) return;
-        Timer t;
-        t.start();
-
-        // Resize
-        cv::resize(subFrame, workFrame, {width / nWidth, height / nHeight});
-//
-//        std::cout << " Adding frame " << at << " | " << text << std::endl;
-        if(!writer.isOpened())
-            std::cout << "[VidWriter] Warning! Stream not opened" << std::endl;
-        if(nWidth * nHeight <= at)
-            std::cout << "[VidWriter] Warning! at=" << at << std::endl;
-
-        int toWidth = (at % nWidth) * (width/nWidth);
-        int toHeight = (int)floor(at/nHeight) * (height/nHeight);
-        cv::Rect dstRect(toWidth, toHeight, subWidth, subHeight);
-        workFrame.copyTo(frame(dstRect));
-
-        if(text != ""){
-            cv::rectangle(frame, {toWidth, toHeight, width, 24}, {0, 0, 0}, -1);
-            cv::putText(frame, text, {toWidth+5, toHeight+16}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255}, 1, cv::LINE_AA);
-        }
-
-        cv::line(frame, {toWidth, toHeight}, {toWidth + width, toHeight}, {100, 100, 100});
-        cv::line(frame, {toWidth, toHeight}, {toWidth, toHeight + height}, {100, 100, 100});
-
-        at++;
-        t.stop();
-//        std::cout << "[VidWriter] writing took " << t.get() << "ms" << std::endl;
-    }
-
-    void show(){
-        if(disabled) return;
-        cv::imshow("VideoWriter", frame);
-        cv::namedWindow("VideoWriter", cv::WND_PROP_FULLSCREEN);
-        cv::setWindowProperty("VideoWriter", cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-//        reset();
-    }
-
-    void flush(){
-        if(disabled) return;
-        writer.write(frame);
-        reset();
-    }
-
-};
-
-struct ExtendedRect : cv::Rect {
-    double angle;
-    double sizeNorm;
-    ExtendedRect(const cv::Rect& boundingBox, double sizeNorm = 0.0, double angle = 0.0)
-    : cv::Rect(boundingBox), sizeNorm(sizeNorm), angle(angle){};
-};
-
-using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
-
-template<class T> using Cluster = std::vector<T>;
-template<class T> using SuperCluster = std::vector<std::vector<T>>;
 
 
 int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int maxArea = 999999){
@@ -197,177 +110,12 @@ cv::Rect getBoundingBox(const Cluster<ExtendedRect> rects){
     return boundingBox;
 }
 
-// ====================================================================================
-// ================================ INSANE  CLUSTERING ================================
-// ====================================================================================
-
-bool sortRectsByArea(const cv::Rect& r1, const cv::Rect& r2){
-    return r1.area() < r2.area();
-}
-
-template <class T>
-bool sortClustersBySize(const std::vector<T> &c1, const std::vector<T> &c2){
-    return c1.size() < c2.size();
-}
-
-// Find the cluster with the best lines-to-intersections ratio (lines/intersections)
-// This can be done backward, and stopping when cluster.size() < bestRatio
-int selectLinesByIntersectRatio(const SuperCluster<Line> lineClusters){
-    Timer t;
-    t.start();
-
-    int iBestCluster = 0;
-    double bestRatio = 0;
-
-    // For each cluster, count the intersections based on bounding boxes of lines
-    for(int iCluster = lineClusters.size()-1; 0 <= iCluster; iCluster--){
-        const auto& cluster = lineClusters[iCluster];
-        if(cluster.size() < bestRatio)
-            break;
-
-        int iIntersections = 0;
-        // Compare each line with eachother, increment intersections if needed
-        for (int iLine = 0; iLine < cluster.size(); iLine++)
-            for (int jLine = iLine + 1; jLine < cluster.size(); jLine++)
-                if(maths::intersect(cluster[iLine], cluster[jLine]))
-                    iIntersections++;
-        // +0.5 to compensate for cluster/0 vs cluster/1
-        double ratio = iIntersections == 0 ? cluster.size() + 0.5 : cluster.size() / (float)iIntersections;
-//                std::cout << cluster.size() << " / " << iIntersections << " = " << ratio << std::endl;
-        if(bestRatio < ratio){
-            bestRatio = ratio;
-            iBestCluster = iCluster;
-        }
-    }
-
-    t.stop();
-    std::cout << "[clustered lines]        time=" << t.get() << "ms bestCluster=" << iBestCluster << " size =" << lineClusters[iBestCluster].size() << " ratio=" << bestRatio << std::endl;
-    return iBestCluster;
-}
-
-// TODO don't cluster based on any match. Cluster based on median / mean / variance / etc.
-void clusterRectsByArea(const std::vector<cv::Rect> &rects, SuperCluster<cv::Rect> &clusters){
-    Timer t;
-    t.start();
-
-    for(const cv::Rect& rect : rects){
-        bool found = false;
-        for(auto& cluster : clusters){
-            for(const auto& rectComp : cluster){
-                if(found) break;
-                if(maths::inRangeRel(rect.area(), rectComp.area(), 0.90)){    // Should be compared with average / median instead of all.
-                    found = true;
-                    cluster.push_back(rect);
-                }
-            }
-        }
-
-        if(!found){
-            clusters.emplace_back();
-            clusters.back().push_back(rect);
-        }
-    }
-    std::sort(clusters.begin(), clusters.end(), sortClustersBySize<cv::Rect>);
-
-    t.stop();
-    std::cout << "[clusterRectsByArea]     time=" << t.get() << "ms rects=" << rects.size() << " clusters=" << clusters.size() << std::endl;
-}
-
-void clusterRectsByDistance(const Cluster<cv::Rect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0){
-    Timer t;
-    t.start();
-
-    // Find all lines between all rects
-    int max = maxDistance * maxDistance;    // because not using root
-    int min = minDistance * minDistance;    // because not using root
-    std::vector<Line> lines;
-    for(int iRect = 0; iRect < rects.size(); iRect++) {
-        for (int jRect = iRect + 1; jRect < rects.size(); jRect++) {
-            int distance = maths::distance(rects[iRect], rects[jRect]);
-            if(min <= distance && distance <= max) {
-                double angle = std::atan2(rects[iRect].y - rects[jRect].y, rects[iRect].x - rects[jRect].x);
-                lines.emplace_back(std::forward_as_tuple(
-                        maths::distance(rects[iRect], rects[jRect]),
-                        rects[iRect],
-                        rects[jRect],
-                        angle
-                ));
-            }
-        }
-    }
-
-    // Cluster lines by length
-    for(const Line& line : lines){
-        bool found = false;
-        for(auto& cluster : clusters){
-            for(const auto& lineComp : cluster){
-                if(found) break;
-                if(maths::inRangeRel(std::get<0>(line), std::get<0>(lineComp), threshold)){    // Should be compared with average / median instead of all.
-                    found = true;
-                    cluster.push_back(line);
-                }
-            }
-        }
-
-        if(!found){
-            clusters.emplace_back();
-            clusters.back().push_back(line);
-        }
-    }
-    std::sort(clusters.begin(), clusters.end(), sortClustersBySize<Line>);
-
-    t.stop();
-    std::cout << "[clusterRectsByDistance] time=" << t.get() << "ms lines=" << lines.size() << " clusters=" << clusters.size() << std::endl;
-}
-
-void clusterLinesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters){
-    Timer t;
-    t.start();
-
-    double pi_step = M_PI / 4;
-    double pi_threshold = pi_step * 0.05;
-
-    for(const Line& line : lines){
-        bool found = false;
-        for(auto& cluster : clusters){
-            for(const Line&  lineComp: cluster){
-                if(found) break;
-
-                const cv::Rect& l1r1 = std::get<1>(line);
-                const cv::Rect& l1r2 = std::get<2>(line);
-                const cv::Rect& l2r1 = std::get<1>(lineComp);
-                const cv::Rect& l2r2 = std::get<2>(lineComp);
-
-                double a1 = std::atan2(l1r1.y - l1r2.y, l1r1.x - l1r2.x);
-                double a2 = std::atan2(l2r1.y - l2r2.y, l2r1.x - l2r2.x);
-
-                double angle = fabs(a1-a2);
-                bool isInRange = maths::inRangeAbs(angle, 0, pi_threshold)
-                        || maths::inRangeAbs(angle, pi_step * 1, pi_threshold)
-                        || maths::inRangeAbs(angle, pi_step * 2, pi_threshold)
-                        || maths::inRangeAbs(angle, pi_step * 3, pi_threshold)
-                        || maths::inRangeAbs(angle, pi_step * 4, pi_threshold);
-
-//                std::cout << a1 << " | " << a2 << " | " << angle << " | " << isInRange << std::endl;
 
 
-                if(isInRange){
-                    found = true;
-                    cluster.push_back(line);
-                }
-            }
-        }
 
-        if(!found){
-            clusters.emplace_back();
-            clusters.back().push_back(line);
-        }
-    }
-    std::sort(clusters.begin(), clusters.end(), sortClustersBySize<Line>);
 
-    t.stop();
-    std::cout << "[clusterLinesByAngle]    time=" << t.get() << "ms lines=" << lines.size() << " clusters=" << clusters.size() << std::endl;
-}
+
+
 
 // Rects are duplicate if the distance between their centers are small compared to their sizes
 void deduplicateRects(const std::vector<cv::Rect> &in, std::vector<cv::Rect>& out){
@@ -532,7 +280,7 @@ int main() {
         nContours += findRects(workFrame, rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
         nRectangles += rectangles.size();
         // Sort rectangles by area
-        std::sort(rectangles.begin(), rectangles.end(), sortRectsByArea);
+        std::sort(rectangles.begin(), rectangles.end(), sorting::rectsByArea);
         t.stop();
 
         std::cout << "[findRectangles]         time=" << t.get() << "ms nContours=" << nContours << " nRects" << rectangles.size() << std::endl;
@@ -546,49 +294,16 @@ int main() {
         // ====================================================================================
         // ================================= CLUSTERING BEGIN =================================
         // ====================================================================================
+
         // Cluster rects by area
         SuperCluster <cv::Rect> scByArea;
-        clusterRectsByArea(rectangles, scByArea);
-        if(scByArea.empty())
-            continue;
+        clustering::rectsByArea(rectangles, scByArea);
+        int iBestCluster = selecting::rectsByVarianceScore(scByArea, CUBE_SIZE, CUBE_SIZE * 3 * 2);
 
-        // Select best cluster based on score
-        t.start();
-        int bestScore = 999999;
-        int iBestCluster = 0;
-
-        for(int i = 0; i < scByArea.size(); i++){
-            const auto& cluster = scByArea[i];
-
-            if(cluster.size() < 4)
-                continue;
-            if(100 < cluster.size())
-                continue;
-
-            std::vector<int> x;
-            std::vector<int> y;
-
-            for (const cv::Rect& rect : cluster) {
-                x.emplace_back(rect.x);
-                y.emplace_back(rect.y);
-            }
-            int varx = maths::variance(x) / 10;
-            int vary = maths::variance(y) / 10;
-            int score = (varx * vary) / cluster.size();
-
-            if(0 < score && score < bestScore){
-                bestScore = score;
-                iBestCluster = i;
-            }
-            std::cout << i << " | varx=" << varx << " vary=" << vary << " score=" << score << std::endl;
-        }
-        t.stop();
-        std::cout << "[selectClusterByScore]   time=" << t.get() << " score=" << bestScore << std::endl;
         // ====================================================================================
         // Filter duplicate rects of largest cluster
         Cluster<cv::Rect> cByArea;
         deduplicateRects(scByArea[iBestCluster], cByArea);
-//        deduplicateRects(scByArea.back(), cByArea);
 
         // Draw all rects in scByArea
         workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
@@ -657,7 +372,6 @@ int main() {
         clusterRectsByDistance(cByArea, scByDistance, 0.8, LINE_MAX_LENGTH);
         if(scByDistance.empty())
             continue;
-        Cluster<Line> mostCommonLines = scByDistance.back();
 
         // ====================================================================================
         // select lines by calculating the lines-intersect ratio based on bounding box

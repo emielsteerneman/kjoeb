@@ -6,5 +6,5 @@ set(CMAKE_CXX_STANDARD 14)
 set(OpenCV_DIR "../opencv/installation/OpenCV-master/lib/cmake/opencv4")
 find_package(OpenCV REQUIRED)
 
-add_executable(kjoeb main.cpp maths.cpp clustering.cpp)
+add_executable(kjoeb main.cpp maths.cpp clustering.cpp utils.cpp)
 target_link_libraries(kjoeb ${OpenCV_LIBS})
