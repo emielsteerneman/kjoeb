@@ -6,9 +6,14 @@
 struct ExtendedRect : cv::Rect {
     double angle;
     double sizeNorm;
-    ExtendedRect(const cv::Rect& boundingBox, double sizeNorm = 0.0, double angle = 0.0)
-            : cv::Rect(boundingBox), sizeNorm(sizeNorm), angle(angle){};
+    int id;
+    ExtendedRect(const cv::Rect& boundingBox, int id = 0, double sizeNorm = 0.0, double angle = 0.0)
+            : cv::Rect(boundingBox), id(id), sizeNorm(sizeNorm), angle(angle){};
 };
+
+
+
+
 
 using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
 

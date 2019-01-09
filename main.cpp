@@ -41,7 +41,7 @@ void g(){
 
 
 
-int findRects(cv::Mat& img, std::vector<cv::Rect>& rects, int minArea = 0, int maxArea = 999999){
+int findRects(cv::Mat& img, Cluster<ExtendedRect>& rects, int minArea = 0, int maxArea = 999999){
     std::vector<std::vector<cv::Point> > contours;
     std::vector<cv::Vec4i> hierarchy;
 
@@ -118,7 +118,7 @@ cv::Rect getBoundingBox(const Cluster<ExtendedRect> rects){
 
 
 // Rects are duplicate if the distance between their centers are small compared to their sizes
-void deduplicateRects(const std::vector<cv::Rect> &in, std::vector<cv::Rect>& out){
+void deduplicateRects(const Cluster<ExtendedRect>& in, Cluster<ExtendedRect>& out){
     Timer t;
     t.start();
 
@@ -216,7 +216,7 @@ int main() {
 
     std::vector<std::vector<cv::Point> > contours;
     std::vector<cv::Vec4i> hierarchy;
-    std::vector<cv::Rect> rectangles;
+    Cluster<ExtendedRect> rectangles;
 
 //    int erosion_size = 1;
 //    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
@@ -259,7 +259,7 @@ int main() {
         // Shrink frame
         // cv::resize(frame, frame, {FRAME_WIDTH, FRAME_HEIGHT});
         tTotal.stop();
-        writer.add(frame, "Original Frame " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
+        writer.add(frame, "Original Frame | @time=" + std::to_string(tTotal.get()) + "  " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
         std::cout << std::to_string(tTotal.get()) << "ms" << std::endl;
         tTotal.start();
 
@@ -272,23 +272,28 @@ int main() {
         if(!frameMask.empty())
             workFrame &= frameMask;
 
+        // === Find rectangles === //
         int nContours = 0;
         int nRectangles = 0;
-
-        // Find rectangles
         rectangles.clear();
+
         nContours += findRects(workFrame, rectangles, RECT_MIN_AREA, RECT_MAX_AREA);
         nRectangles += rectangles.size();
+
         // Sort rectangles by area
         std::sort(rectangles.begin(), rectangles.end(), sorting::rectsByArea);
-        t.stop();
 
+        // Give each rectangle its own unique id
+        for(int id = 0; id < rectangles.size(); id++)
+            rectangles[id].id = id;
+        t.stop();
         std::cout << "[findRectangles]         time=" << t.get() << "ms nContours=" << nContours << " nRects" << rectangles.size() << std::endl;
-        // Draw rectangles
+
+        // Draw all rectangles found on top of the Canny edge detection
         cv::cvtColor(workFrame, workFrame, cv::COLOR_GRAY2BGR);
         for(cv::Rect rect : rectangles)
             cv::rectangle(workFrame, rect, {0, 255, 0});
-        writer.add(workFrame, "Rectangles | " + std::to_string(nRectangles) + " / " + std::to_string(nContours));
+        writer.add(workFrame, "Rectangles | @time=" + std::to_string(tTotal.get()) + " " + std::to_string(nRectangles) + " / " + std::to_string(nContours));
 
 
         // ====================================================================================
@@ -296,95 +301,95 @@ int main() {
         // ====================================================================================
 
         // Cluster rects by area
-        SuperCluster <cv::Rect> scByArea;
+        SuperCluster<ExtendedRect> scByArea;
         clustering::rectsByArea(rectangles, scByArea);
         int iBestCluster = selecting::rectsByVarianceScore(scByArea, CUBE_SIZE, CUBE_SIZE * 3 * 2);
+        if(iBestCluster == -1) continue;
 
-        // ====================================================================================
-        // Filter duplicate rects of largest cluster
-        Cluster<cv::Rect> cByArea;
+        // Deduplicate rects of best cluster
+        Cluster<ExtendedRect> cByArea;
         deduplicateRects(scByArea[iBestCluster], cByArea);
+        if(cByArea.empty()) continue;
 
-        // Draw all rects in scByArea
-        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-        for(const auto& cluster : scByArea){
-            for(int iRect = 0; iRect < cluster.size(); iRect++) {
-                double iColour = 50 + (200 * iRect / cluster.size());
-                cv::rectangle(workFrameClustering, cluster[iRect], {iColour, 0, iColour});
+        // Cluster rects by distance -> lines
+        SuperCluster<Line> scByDistance;
+        clustering::rectsByDistance(cByArea, scByDistance, 0.8, LINE_MAX_LENGTH);
+        if(scByDistance.empty()) continue;
+
+        // Select lines by calculating the lines-intersect ratio based on bounding box
+        int iBestLines = selecting::linesByIntersectRatio(scByDistance);
+        Cluster<Line> linesByRatio = scByDistance[iBestLines];
+
+        // Cluster lines by angle
+        SuperCluster<Line> linesByAngle;
+        clustering::linesByAngle(linesByRatio, linesByAngle);
+        Cluster<Line> bestLines = linesByAngle.back();
+
+
+        // Draw all clusters in scByArea in purple, chosen in green
+        if(true) {
+            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            for (const auto &cluster : scByArea) {
+                for (int iRect = 0; iRect < cluster.size(); iRect++) {
+                    double iColour = 50 + (200 * iRect / cluster.size());
+                    cv::rectangle(imshowFrame, cluster[iRect], {iColour, 0, iColour});
+                }
             }
+            // Draw chosen cluster of scByArea after deduplication
+            for (const cv::Rect &rect : cByArea)
+                cv::rectangle(imshowFrame, rect, {0, 255, 0}, 3);
+            // sigh
+            std::string strIBestCluster = std::to_string(iBestCluster);
+            strIBestCluster.resize(3, ' ');
+            std::string strNClusters = std::to_string(scByArea.size());
+            strNClusters.resize(3, ' ');
+            std::string strArea = std::to_string(cByArea.front().area());
+            strArea.resize(3, ' ');
+            writer.add(imshowFrame, "By area | i=" + strIBestCluster + " nC=" + strNClusters + " area=" + strArea);
         }
-        // Draw largest of scByArea after its deduplication
-        for (const cv::Rect& rect : cByArea)
-            cv::rectangle(workFrameClustering, rect, {0, 255, 0}, 3);
 
-        // sigh
-        std::string strIBestCluster = std::to_string(iBestCluster); strIBestCluster.resize(3, ' ');
-        std::string strNClusters = std::to_string(scByArea.size()); strNClusters.resize(3, ' ');
-        std::string strScore = std::to_string(bestScore); strScore.resize(4, ' ');
-        std::string strArea = std::to_string(cByArea.front().area()); strArea.resize(3, ' ');
-        writer.add(workFrameClustering, "By area | i=" + strIBestCluster + " nC=" + strNClusters + " score=" + strScore + " area=" + strArea);
-
-//        cv::imshow("chosen", workFrameClustering);
-
+        // Imshow all individual clusters and their scores
         if(false){
-        for(int i = 0; i < scByArea.size(); i++){
-            if(scByArea[i].size() < 4)
-                continue;
-            if(100 < scByArea[i].size())
-                continue;
-
             int factor = 1;
-            workFrameClustering = cv::Mat::zeros(frame.rows/factor, frame.cols/factor, CV_8UC3);
-            std::vector<int> x;
-            std::vector<int> y;
+            for(int i = 0; i < scByArea.size(); i++){
+                if(scByArea[i].size() < 4)
+                    continue;
+                if(100 < scByArea[i].size())
+                    continue;
 
-            for (const cv::Rect& rect : scByArea[i]) {
-                x.emplace_back(rect.x);
-                y.emplace_back(rect.y);
-                cv::Rect rect2;
-                rect2.x = rect.x / factor; rect2.y = rect.y / factor; rect2.width = rect.width / factor; rect2.height = rect.height / factor;
-                cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
-                cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
+                imshowFrame = cv::Mat::zeros(frame.rows/factor, frame.cols/factor, CV_8UC3);
+                for (const cv::Rect& rect : scByArea[i]) {
+                    cv::Rect rect2;
+                    rect2.x = rect.x / factor; rect2.y = rect.y / factor; rect2.width = rect.width / factor; rect2.height = rect.height / factor;
+                    cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
+                    cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
+                }
+                double score = selecting::rectsVarianceScore(scByArea[i]);
+                std::string s;
+                s += "by area " + std::to_string(i);
+                s += " size=" + std::to_string(scByArea[i].size());
+                s += " | "+ std::to_string(score);
+                cv::imshow(s, imshowFrame);
             }
-            int varx = maths::variance(x) / 10;
-            int vary = maths::variance(y) / 10;
-            int score = (varx * vary) / scByArea[i].size();
-            std::string s = "";
-            s += "by area " + std::to_string(i);
-            s += " size=" + std::to_string(scByArea[i].size());
-            s += " " + std::to_string(varx);
-            s += "," + std::to_string(vary);
-            s += " | "+ std::to_string(score);
-//            cv::putText(workFrameClustering, s, {10, 10}, cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 0, 0});
-            cv::imshow(s, workFrameClustering);
-        }
             writer.show();
             if(cv::waitKey(0) == 27 ) break; // esc
             cv::destroyAllWindows();
             continue;
         }
 
-//        continue;
 
-        // ====================================================================================
-        // Cluster most common rects by distance
-        SuperCluster<Line> scByDistance;
-        clusterRectsByDistance(cByArea, scByDistance, 0.8, LINE_MAX_LENGTH);
-        if(scByDistance.empty())
-            continue;
 
-        // ====================================================================================
-        // select lines by calculating the lines-intersect ratio based on bounding box
-        int iBestLines = selectLinesByIntersectRatio(scByDistance);
-        Cluster<Line> linesByRatio = scByDistance[iBestLines];
-
-        // === Draw all squares, lines, and selected lines ===
+        // === Draw all rectangles, lines, and selected lines ===
         if(true) {
-            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-            // Draw most common squares after deduplication
+            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            // Draw rectangles by area in White
             for (const cv::Rect& rect : cByArea)
-                cv::rectangle(workFrameClustering, rect, {255, 255, 255}, 3);
-            // Draw all lines
+                cv::rectangle(imshowFrame, rect, {255, 255, 255}, 3);
+            // Draw rectangles by distance in Green
+            for (const cv::Rect& rect : cByArea)
+                cv::rectangle(imshowFrame, rect, {0, 255, 0}, 3);
+
+            // Draw rectangles by angle in Blue, and all lines
             for(int iCluster = 0; iCluster < scByDistance.size(); iCluster++) {
                 const Cluster<Line>& lineCluster = scByDistance[iCluster];
                 double iColour = 50 + (200 * iCluster / scByDistance.size());
@@ -393,16 +398,14 @@ int main() {
                     const cv::Rect &r2 = std::get<2>(line);
                     cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
                     cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-                    cv::line(workFrameClustering, p1, p2, {iColour, 0, iColour}, 1);
+                    cv::line(imshowFrame, p1, p2, {iColour, 0, iColour}, 2);
+                    cv::rectangle(imshowFrame, r1, {0, 255, 0}, 3);
+                    cv::rectangle(imshowFrame, r2, {0, 255, 0}, 3);
                 }
             }
         }
 
-        // ====================================================================================
-        // Cluster lines by angle
-        SuperCluster<Line> linesByAngle;
-        clusterLinesByAngle(linesByRatio, linesByAngle);
-        Cluster<Line> bestLines = linesByAngle.back();
+
 
 //      === Draw all squares, lines, and selected lines ===
         if(true) {
@@ -509,7 +512,7 @@ int main() {
         double rotationAngle = 0;
         int gridWidth = 0;
         int gridHeight = 0;
-        bestScore = 0;
+        int bestScore = 0;
         cv::Point bestPoint(0, 0);
 
         if(!distinctRects.empty()){

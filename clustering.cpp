@@ -5,7 +5,7 @@
 #include "maths.h"
 
 namespace sorting {
-    bool rectsByArea(const cv::Rect& r1, const cv::Rect& r2){
+    bool rectsByArea(const ExtendedRect& r1, const ExtendedRect& r2){
         return r1.area() < r2.area();
     }
 
@@ -18,11 +18,11 @@ namespace sorting {
 
 namespace clustering {
 
-    void rectsByArea(const Cluster <cv::Rect> &rects, SuperCluster<cv::Rect> &clusters){
+    void rectsByArea(const Cluster<ExtendedRect>& rects, SuperCluster<ExtendedRect>& clusters){
         Timer t;
         t.start();
 
-        for(const cv::Rect& rect : rects){
+        for(const ExtendedRect& rect : rects){
             bool found = false;
             for(auto& cluster : clusters){
                 for(const auto& rectComp : cluster){
@@ -46,7 +46,7 @@ namespace clustering {
         std::cout << "[clusterRectsByArea]     time=" << t.get() << "ms rects=" << rects.size() << " clusters=" << clusters.size() << std::endl;
     }
 
-    void rectsByDistance(const Cluster<cv::Rect> &rects, SuperCluster<Line> &clusters, double threshold, int maxDistance, int minDistance){
+    void rectsByDistance(const Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold, int maxDistance, int minDistance){
         Timer t;
         t.start();
 
@@ -106,10 +106,10 @@ namespace clustering {
                 for(const Line&  lineComp: cluster){
                     if(found) break;
 
-                    const cv::Rect& l1r1 = std::get<1>(line);
-                    const cv::Rect& l1r2 = std::get<2>(line);
-                    const cv::Rect& l2r1 = std::get<1>(lineComp);
-                    const cv::Rect& l2r2 = std::get<2>(lineComp);
+                    const ExtendedRect& l1r1 = std::get<1>(line);
+                    const ExtendedRect& l1r2 = std::get<2>(line);
+                    const ExtendedRect& l2r1 = std::get<1>(lineComp);
+                    const ExtendedRect& l2r2 = std::get<2>(lineComp);
 
                     double a1 = std::atan2(l1r1.y - l1r2.y, l1r1.x - l1r2.x);
                     double a2 = std::atan2(l2r1.y - l2r2.y, l2r1.x - l2r2.x);
@@ -185,10 +185,10 @@ namespace selecting {
         return iBestCluster;
     }
 
-    double rectsVarianceScore(const Cluster<cv::Rect>& cluster){
+    double rectsVarianceScore(const Cluster<ExtendedRect>& cluster){
         std::vector<int> x, y;
 
-        for (const cv::Rect& rect : cluster) {
+        for (const ExtendedRect& rect : cluster) {
             x.emplace_back(rect.x);
             y.emplace_back(rect.y);
         }
@@ -199,7 +199,7 @@ namespace selecting {
         return (variance_x * variance_y) / cluster.size();
     }
 
-    int rectsByVarianceScore(const SuperCluster<cv::Rect>& clusters, int minSize, int maxSize){
+    int rectsByVarianceScore(const SuperCluster<ExtendedRect>& clusters, int minSize, int maxSize){
         Timer t;
         t.start();
 
