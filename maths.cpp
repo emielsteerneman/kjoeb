@@ -102,7 +102,7 @@ namespace maths {
     }
 
     bool intersect(const Line& l1, const Line& l2){
-        return intersect(std::get<1>(l1), std::get<2>(l1), std::get<1>(l2), std::get<2>(l2));
+        return intersect(l1.r1, l1.r2, l2.r1, l2.r2);
     }
 
 }

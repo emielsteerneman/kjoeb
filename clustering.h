@@ -8,7 +8,6 @@
 #include "utils.h"
 
 namespace sorting {
-    bool rectsByArea(const ExtendedRect& r1, const ExtendedRect& r2);
 
     template <class T>
     bool clustersBySize(const Cluster<T> &c1, const Cluster<T> &c2);
@@ -19,7 +18,7 @@ namespace clustering {
 
     void rectsByArea(const Cluster <ExtendedRect> &rects, SuperCluster<ExtendedRect> &clusters);
 
-    void rectsByDistance(const Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0);
+    void rectsByDistance(Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0);
 
     void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters);
 }

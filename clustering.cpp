@@ -5,9 +5,6 @@
 #include "maths.h"
 
 namespace sorting {
-    bool rectsByArea(const ExtendedRect& r1, const ExtendedRect& r2){
-        return r1.area() < r2.area();
-    }
 
     template <class T>
     bool clustersBySize(const Cluster<T> &c1, const Cluster<T> &c2){
@@ -40,13 +37,13 @@ namespace clustering {
             }
         }
 
-        std::sort(clusters.begin(), clusters.end(), sorting::rectsByArea);
+        std::sort(clusters.begin(), clusters.end());
 
         t.stop();
         std::cout << "[clusterRectsByArea]     time=" << t.get() << "ms rects=" << rects.size() << " clusters=" << clusters.size() << std::endl;
     }
 
-    void rectsByDistance(const Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold, int maxDistance, int minDistance){
+    void rectsByDistance(Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold, int maxDistance, int minDistance){
         Timer t;
         t.start();
 
@@ -59,12 +56,12 @@ namespace clustering {
                 int distance = maths::distance(rects[iRect], rects[jRect]);
                 if(min <= distance && distance <= max) {
                     double angle = std::atan2(rects[iRect].y - rects[jRect].y, rects[iRect].x - rects[jRect].x);
-                    lines.emplace_back(std::forward_as_tuple(
-                            maths::distance(rects[iRect], rects[jRect]),
-                            rects[iRect],
-                            rects[jRect],
-                            angle
-                    ));
+                    lines.emplace_back(
+                        maths::distance(rects[iRect], rects[jRect]),
+                        angle,
+                        rects[iRect],
+                        rects[jRect]
+                    );
                 }
             }
         }
@@ -75,7 +72,7 @@ namespace clustering {
             for(auto& cluster : clusters){
                 for(const auto& lineComp : cluster){
                     if(found) break;
-                    if(maths::inRangeRel(std::get<0>(line), std::get<0>(lineComp), threshold)){    // Should be compared with average / median instead of all.
+                    if(maths::inRangeRel(line.distance, lineComp.distance, threshold)){    // Should be compared with average / median instead of all.
                         found = true;
                         cluster.push_back(line);
                     }
@@ -90,7 +87,7 @@ namespace clustering {
         std::sort(clusters.begin(), clusters.end(), sorting::clustersBySize<Line>);
 
         t.stop();
-        std::cout << "[clusterRectsByDistance] time=" << t.get() << "ms lines=" << lines.size() << " clusters=" << clusters.size() << std::endl;
+        std::cout << "[clusterRectsByDistance] time=" << t.get() << "ms rects=" << rects.size() << " lines=" << lines.size() << " clusters=" << clusters.size() << std::endl;
     }
 
     void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters){
@@ -106,13 +103,8 @@ namespace clustering {
                 for(const Line&  lineComp: cluster){
                     if(found) break;
 
-                    const ExtendedRect& l1r1 = std::get<1>(line);
-                    const ExtendedRect& l1r2 = std::get<2>(line);
-                    const ExtendedRect& l2r1 = std::get<1>(lineComp);
-                    const ExtendedRect& l2r2 = std::get<2>(lineComp);
-
-                    double a1 = std::atan2(l1r1.y - l1r2.y, l1r1.x - l1r2.x);
-                    double a2 = std::atan2(l2r1.y - l2r2.y, l2r1.x - l2r2.x);
+                    double a1 = std::atan2(line.r1.y     - line.r2.y    , line.r1.x     - line.r2.x);
+                    double a2 = std::atan2(lineComp.r1.y - lineComp.r2.y, lineComp.r1.x - lineComp.r2.x);
 
                     double angle = fabs(a1-a2);
                     bool isInRange = maths::inRangeAbs(angle, 0, pi_threshold)
@@ -196,6 +188,8 @@ namespace selecting {
         double variance_x = maths::variance(x) / 100;
         double variance_y = maths::variance(y) / 100;
 
+//        std::cout << "[rectsVarianceScore]       varx=" << variance_x << " vary=" << variance_y << " score=" << ((variance_x * variance_y) / cluster.size()) << std::endl;
+
         return (variance_x * variance_y) / cluster.size();
     }
 
@@ -208,6 +202,8 @@ namespace selecting {
 
         for(int i = 0; i < clusters.size(); i++){
             const auto& cluster = clusters[i];
+
+//            std::cout << "[rectsByVarianceScore]   Cluster " << i << " with size " << cluster.size() << std::endl;
 
             if(cluster.size() < minSize)
                 continue;

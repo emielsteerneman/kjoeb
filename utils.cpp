@@ -14,6 +14,10 @@ double Timer::get(){
     return std::chrono::duration_cast<std::chrono::microseconds>(t_end - t_begin).count() / 1000.0;
 }
 
+double Timer::now(){
+    return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t_begin).count() / 1000.0;
+}
+
 
 
 

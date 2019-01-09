@@ -1,5 +1,6 @@
 #include "utils.h"
 #include "clustering.h"
+#include "drawing.h"
 
 #include <iostream>
 #include <opencv2/opencv.hpp>
@@ -122,7 +123,7 @@ void deduplicateRects(const Cluster<ExtendedRect>& in, Cluster<ExtendedRect>& ou
     Timer t;
     t.start();
 
-    for(const cv::Rect& rect : in){
+    for(const ExtendedRect& rect : in){
         bool found = false;
         for(const cv::Rect& rectComp : out){
             double dist = maths::distance(rect, rectComp);
@@ -172,7 +173,7 @@ void DrawRotatedRectangle(cv::Mat& image, const ExtendedRect& rect){
 
 int main() {
     std::cout << "Hello, World!" << std::endl;
-    std::cout << std::setprecision(3) << std::fixed;
+    std::cout << std::setprecision(2) << std::fixed;
 
     const int FPS = 5;
 
@@ -223,7 +224,7 @@ int main() {
 //            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
 //            cv::Point(erosion_size, erosion_size) );
 
-    VidWriter writer("/home/emiel/Desktop/__kjoeb.mp4", 1600, 900, 3, 3, FPS);
+    VidWriter writer("/home/emiel/Desktop/kjoeb/_kjoeb.mp4", 1600, 900, 3, 3, 1000 / 65);
 //    writer.disable();
 
     int nFrames = 0;
@@ -231,7 +232,9 @@ int main() {
     std::cout << (frameMask.empty() ? "Empty!" : "Not empty!") << std::endl;
 
     for(;;){
-        std::cout << nFrames << std::endl;
+        std::cout << std::endl;
+        std::cout << "=== IMAGE PROCESSING ====" << std::endl;
+
         nFrames++;
 
         writer.show();
@@ -248,7 +251,7 @@ int main() {
         bool isCaptured = cap.read(frame_og);
         frame_og.copyTo(frame);
         t.stop();
-        std::cout << "[capture]                time=" << t.get() << "ms" << std::endl;
+        std::cout << "[capture]                time=" << t.get() << "ms nFrames=" << nFrames << std::endl;
 
         // === Skip empty frames
         if(frame.empty()){
@@ -259,8 +262,8 @@ int main() {
         // Shrink frame
         // cv::resize(frame, frame, {FRAME_WIDTH, FRAME_HEIGHT});
         tTotal.stop();
-        writer.add(frame, "Original Frame | @time=" + std::to_string(tTotal.get()) + "  " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
-        std::cout << std::to_string(tTotal.get()) << "ms" << std::endl;
+        writer.add(frame, "Original Frame | @time=" + std::to_string(tTotal.now()) + "  " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
+        std::cout << "[TotalTime]              total time=" << tTotal.get() << "ms" << std::endl;
         tTotal.start();
 
         // === Canny Edge Detection === //
@@ -281,7 +284,7 @@ int main() {
         nRectangles += rectangles.size();
 
         // Sort rectangles by area
-        std::sort(rectangles.begin(), rectangles.end(), sorting::rectsByArea);
+        std::sort(rectangles.begin(), rectangles.end());
 
         // Give each rectangle its own unique id
         for(int id = 0; id < rectangles.size(); id++)
@@ -293,59 +296,66 @@ int main() {
         cv::cvtColor(workFrame, workFrame, cv::COLOR_GRAY2BGR);
         for(cv::Rect rect : rectangles)
             cv::rectangle(workFrame, rect, {0, 255, 0});
-        writer.add(workFrame, "Rectangles | @time=" + std::to_string(tTotal.get()) + " " + std::to_string(nRectangles) + " / " + std::to_string(nContours));
-
+        writer.add(workFrame, "Rectangles | @time=" + std::to_string(tTotal.now()) + " " + std::to_string(nRectangles) + " / " + std::to_string(nContours));
 
         // ====================================================================================
         // ================================= CLUSTERING BEGIN =================================
         // ====================================================================================
+        std::cout << "=== CLUSTERING ==========" << std::endl;
 
-        // Cluster rects by area
+        /// Cluster rects by area
         SuperCluster<ExtendedRect> scByArea;
         clustering::rectsByArea(rectangles, scByArea);
-        int iBestCluster = selecting::rectsByVarianceScore(scByArea, CUBE_SIZE, CUBE_SIZE * 3 * 2);
-        if(iBestCluster == -1) continue;
+        /// Select best cluster by variance score
+        int iBestCluster = selecting::rectsByVarianceScore(scByArea, CUBE_SIZE, CUBE_SIZE * CUBE_SIZE * 3);
+        if(iBestCluster == -1){
+            std::cout << "[rectsByVarianceScore]   No suitable cluster found!" << std::endl;
+            continue;
+        }
 
-        // Deduplicate rects of best cluster
+        /// Deduplicate rects of best cluster
         Cluster<ExtendedRect> cByArea;
         deduplicateRects(scByArea[iBestCluster], cByArea);
         if(cByArea.empty()) continue;
 
-        // Cluster rects by distance -> lines
-        SuperCluster<Line> scByDistance;
-        clustering::rectsByDistance(cByArea, scByDistance, 0.8, LINE_MAX_LENGTH);
-        if(scByDistance.empty()) continue;
-
-        // Select lines by calculating the lines-intersect ratio based on bounding box
-        int iBestLines = selecting::linesByIntersectRatio(scByDistance);
-        Cluster<Line> linesByRatio = scByDistance[iBestLines];
-
-        // Cluster lines by angle
-        SuperCluster<Line> linesByAngle;
-        clustering::linesByAngle(linesByRatio, linesByAngle);
-        Cluster<Line> bestLines = linesByAngle.back();
-
-
         // Draw all clusters in scByArea in purple, chosen in green
         if(true) {
             imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-            for (const auto &cluster : scByArea) {
-                for (int iRect = 0; iRect < cluster.size(); iRect++) {
-                    double iColour = 50 + (200 * iRect / cluster.size());
-                    cv::rectangle(imshowFrame, cluster[iRect], {iColour, 0, iColour});
-                }
-            }
-            // Draw chosen cluster of scByArea after deduplication
-            for (const cv::Rect &rect : cByArea)
-                cv::rectangle(imshowFrame, rect, {0, 255, 0}, 3);
-            // sigh
-            std::string strIBestCluster = std::to_string(iBestCluster);
-            strIBestCluster.resize(3, ' ');
-            std::string strNClusters = std::to_string(scByArea.size());
-            strNClusters.resize(3, ' ');
-            std::string strArea = std::to_string(cByArea.front().area());
-            strArea.resize(3, ' ');
-            writer.add(imshowFrame, "By area | i=" + strIBestCluster + " nC=" + strNClusters + " area=" + strArea);
+            drawSuperCluster(imshowFrame, scByArea);
+            drawCluster(imshowFrame, cByArea, {0, 255, 0}, 3);
+            writer.add(imshowFrame, "By area @time=" + std::to_string(tTotal.now()) + " nC=" + std::to_string(scByArea.size()) + " area=" + std::to_string(cByArea.front().area()));
+        }
+
+        /// Cluster rects by distance -> lines
+        SuperCluster<Line> scByDistance;
+        clustering::rectsByDistance(cByArea, scByDistance, 0.8, LINE_MAX_LENGTH);
+        if(scByDistance.empty()){
+            std::cout << "[rectsByDistance]        No suitable clusters found!" << std::endl;
+            continue;
+        }
+        /// Select lines by calculating the lines-intersect ratio based on bounding box
+        int iBestLines = selecting::linesByIntersectRatio(scByDistance);
+        if(iBestLines == -1){
+            std::cout << "[linesByIntersectRatio]  No cluster has the best score!" << std::endl;
+            continue;
+        }
+        Cluster<Line> linesByDistance = scByDistance[iBestLines];
+
+        /// Cluster lines by angle
+        SuperCluster<Line> linesByAngle;
+        clustering::linesByAngle(linesByDistance, linesByAngle);
+        Cluster<Line> bestLines = linesByAngle.back();
+
+        // === Draw all rectangles, lines, and selected lines ===
+        if(true) {
+            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            // Draw rectangles by area in white
+            drawCluster(imshowFrame, cByArea, {255, 255, 255});
+            // Draw rectangles by distance in green
+            drawCluster(imshowFrame, linesByDistance, {0, 0, 255});
+            // Draw rectangles by angle in red
+            drawCluster(imshowFrame, bestLines, {0, 255, 0});
+            writer.add(imshowFrame, "Lines @time=" + std::to_string(tTotal.now()) + " by distance and angle");
         }
 
         // Imshow all individual clusters and their scores
@@ -377,51 +387,6 @@ int main() {
             continue;
         }
 
-
-
-        // === Draw all rectangles, lines, and selected lines ===
-        if(true) {
-            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-            // Draw rectangles by area in White
-            for (const cv::Rect& rect : cByArea)
-                cv::rectangle(imshowFrame, rect, {255, 255, 255}, 3);
-            // Draw rectangles by distance in Green
-            for (const cv::Rect& rect : cByArea)
-                cv::rectangle(imshowFrame, rect, {0, 255, 0}, 3);
-
-            // Draw rectangles by angle in Blue, and all lines
-            for(int iCluster = 0; iCluster < scByDistance.size(); iCluster++) {
-                const Cluster<Line>& lineCluster = scByDistance[iCluster];
-                double iColour = 50 + (200 * iCluster / scByDistance.size());
-                for (const Line &line : lineCluster) {
-                    const cv::Rect &r1 = std::get<1>(line);
-                    const cv::Rect &r2 = std::get<2>(line);
-                    cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-                    cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-                    cv::line(imshowFrame, p1, p2, {iColour, 0, iColour}, 2);
-                    cv::rectangle(imshowFrame, r1, {0, 255, 0}, 3);
-                    cv::rectangle(imshowFrame, r2, {0, 255, 0}, 3);
-                }
-            }
-        }
-
-
-
-//      === Draw all squares, lines, and selected lines ===
-        if(true) {
-            // Draw selected lines
-            for (const Line &line : bestLines) {
-                const cv::Rect &r1 = std::get<1>(line);
-                const cv::Rect &r2 = std::get<2>(line);
-                cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-                cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
-                cv::rectangle(workFrameClustering, r1, {0, 255, 0}, 3);
-                cv::rectangle(workFrameClustering, r2, {0, 255, 0}, 3);
-                cv::line(workFrameClustering, p1, p2, {0, 255, 0}, 3);
-            }
-            writer.add(workFrameClustering, "Lines by ratio and angle |  scAngle=" + std::to_string(linesByAngle.size()) + " nLines=" + std::to_string(bestLines.size()));
-        }
-
         // Show all line clusters in a separate window
         if(false){
             // Draw all lines
@@ -429,10 +394,8 @@ int main() {
                 const Cluster<Line>& lineCluster = scByDistance[iCluster];
                 imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
                 for (const Line &line : lineCluster) {
-                    const cv::Rect &r1 = std::get<1>(line);
-                    const cv::Rect &r2 = std::get<2>(line);
-                    cv::Point p1(r1.x + r1.width / 2, r1.y + r1.height / 2);
-                    cv::Point p2(r2.x + r2.width / 2, r2.y + r2.height / 2);
+                    cv::Point p1(line.r1.x + line.r1.width / 2, line.r1.y + line.r1.height / 2);
+                    cv::Point p2(line.r2.x + line.r2.width / 2, line.r2.y + line.r2.height / 2);
                     cv::line(imshowFrame, p1, p2, {255, 255, 255}, 1);
                 }
 
@@ -447,185 +410,193 @@ int main() {
             continue;
         }
 
-
-
         // ====================================================================================
+        // ================================== GRIDDING BEGIN ==================================
+        // ====================================================================================
+        std::cout << "=== GRIDDING ============" << std::endl;
+
+        if(bestLines.empty()){
+            std::cout << "[bestLines]              No lines to create grid from!" << std::endl;
+            continue;
+        }
+
+
         // Calculate the average rectangle size by averaging the length of the lines
+        // Also calculate the average angle
         t.start();
-        double avgRectSize = 0;
-        if(!bestLines.empty()){
-            // Friendly reminder that line lengths are stored without sqrt!
-            for(const Line &line : bestLines) avgRectSize += sqrt(std::get<0>(line));
-            avgRectSize /= bestLines.size();
+        double rectSizeNorm = 0.0;
+        double rectAngleNorm = 0.0;
+        double angleOffset = bestLines.front().angle;
+        // Friendly reminder that line lengths are stored without sqrt!
+        for(const Line &line : bestLines) {
+            rectSizeNorm += sqrt(line.distance);
+            rectAngleNorm += maths::normalizeAngle90(line.angle - angleOffset);
+        }
+        rectSizeNorm /= bestLines.size();
+        rectAngleNorm = rectAngleNorm / bestLines.size() + angleOffset;
+        t.stop();
+        std::cout << "[averageRectSizeAngle]   time=" << t.get() << " size=" << rectSizeNorm << " angle=" << rectAngleNorm << std::endl;
+
+
+        // Get distinct rectangles from the selected lines
+        Cluster<ExtendedRect> distinctRects;
+        t.start();
+        for (const Line &line : bestLines) {
+
+            bool r1Found = false;
+            bool r2Found = false;
+
+            for (const ExtendedRect& rect : distinctRects) {
+                r1Found |= line.r1.id == rect.id;
+                r2Found |= line.r2.id == rect.id;
+            }
+
+            if(!r1Found) distinctRects.push_back(line.r1);
+            if(!r2Found) distinctRects.push_back(line.r2);
         }
         t.stop();
-        std::cout << "[averageRectSize]        time=" << t.get() << " size=" << avgRectSize << std::endl;
+        std::cout << "[LinesToDistinctRects]   time=" << t.get() << "ms " << (bestLines.size() * 2) << " -> " << distinctRects.size() << std::endl;
 
+        // Set size and angle for each rectangle
+        for(ExtendedRect& rect : distinctRects) {
+            rect.sizeNorm = rectSizeNorm;
+            rect.angle = rectAngleNorm;
+        }
 
-        // ====================================================================================
-        // Get distinct squares and average rect size from the selected lines
-        Cluster<ExtendedRect> distinctRects;
-        if(!bestLines.empty()){
-            t.start();
-            for (const Line &line : bestLines) {
-                const cv::Rect& r1 = std::get<1>(line);
-                const cv::Rect& r2 = std::get<2>(line);
+        // Get bounding box fo all rectangles
+        cv::Rect boundingBox = getBoundingBox(distinctRects);
 
-                bool r1Found = false;
-                bool r2Found = false;
+        // === Draw distinct rectangles and bounding box ===
+        if(true) {
+            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            drawCluster(imshowFrame, distinctRects, {0, 255, 0});
+            cv::rectangle(imshowFrame, boundingBox, {0, 255, 0}, 2);
 
-                for (const ExtendedRect& rect : distinctRects) {
-                    r1Found |= (r1.x == rect.x && r1.y == rect.y);
-                    r2Found |= (r2.x == rect.x && r2.y == rect.y);
-                }
+            for(const ExtendedRect& rect : distinctRects)
+                DrawRotatedRectangle(imshowFrame, rect);
 
-                if(!r1Found) distinctRects.emplace_back(r1, avgRectSize, std::get<3>(line));
-                if(!r2Found) distinctRects.emplace_back(r2, avgRectSize, std::get<3>(line));
-            }
-            t.stop();
-            std::cout << "[LinesToDistinctRects]   time=" << t.get() << "ms " << (bestLines.size() * 2) << " -> " << distinctRects.size() << std::endl;
+            writer.add(imshowFrame, "Bounding box @time=" + std::to_string(tTotal.now()));
         }
 
 
-        // ====================================================================================
-        // Get bounding box of all the distinct rects
-        cv::Rect boundingBox = getBoundingBox(distinctRects);
+        // === Rotate all rects around the center of the bounding box === //
+        // Get center of the bouding box of all the rectangles
+        cv::Point gridCenter(boundingBox.x + boundingBox.width / 2, boundingBox.y + boundingBox.height / 2);
+        for(ExtendedRect& rect : distinctRects){
+            cv::Point newPoint = rotatePointAroundPoint(rect.tl(), gridCenter, - rectAngleNorm);
+            rect.x = newPoint.x;
+            rect.y = newPoint.y;
+        }
 
-        // Draw distinct squares and bounding box
-//        if(!distinctRects.empty()) {
-//            workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
-//            for (const ExtendedRect &rect : distinctRects)
-//                DrawRotatedRectangle(workFrameClustering, rect);
-//            cv::rectangle(workFrameClustering, boundingBox, {255}, 3);
-//        }
-
-//        cv::cvtColor(workFrameClustering, workFrameClustering, cv::COLOR_BGR2GRAY);
-        workFrame.copyTo(frame, workFrameClustering);
-        writer.add(frame);
-
-
+        // === Get the bounding box of the rotated rects, and normalize all rotated rects to position (0, 0); === //
+        cv::Rect box = getBoundingBox(distinctRects);
+        for (ExtendedRect& rect : distinctRects) {
+            rect.x -= box.x;
+            rect.y -= box.y;
+        }
 
 
-        // ====================================================================================
-        // Rotate all squares around the center of the bounding box
-        workFrameClustering = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
-        double rotationAngle = 0;
+        // === Draw rotated rectangles ===
+        if(true) {
+            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+//            cv::rectangle(imshowFrame, box, {0, 255, 0}, 2);
+            int tx = 0;
+            int ty = 0;
+            for(const ExtendedRect& rect : distinctRects) {
+                ExtendedRect rect2(rect);
+                tx += rect.x;
+                ty += rect.y;
+                rect2.x = rect.x + 40;
+                rect2.y = rect.y + 40;
+                rect2.angle = rect.angle - rectAngleNorm;
+                rect2.sizeNorm = rect.sizeNorm;
+                DrawRotatedRectangle(imshowFrame, rect2);
+            }
+            tx /= distinctRects.size();
+            ty /= distinctRects.size();
+            cv::Rect r(tx - 10, ty - 10, 20, 20);
+            r.x += 40 + rectSizeNorm/2; r.y += 40 + rectSizeNorm/2;
+            cv::rectangle(imshowFrame, r, {0, 0, 255}, 3);
+            writer.add(imshowFrame, "Rotated rectangles @time=" + std::to_string(tTotal.now()));
+        }
+
+
+
+        // === Calculate the size of the grid === //
         int gridWidth = 0;
         int gridHeight = 0;
+        Cluster<cv::Point> gridPoints;
+        for(ExtendedRect& rect : distinctRects) {
+            int dx = (int)round(rect.x / rectSizeNorm);
+            int dy = (int)round(rect.y / rectSizeNorm);
+            gridWidth  = std::max(dx+1, gridWidth);
+            gridHeight = std::max(dy+1, gridHeight);
+            gridPoints.emplace_back(dx, dy);
+        }
+
+        // === Create and fill grid === //
+        int grid[gridWidth * gridHeight];
+        for(int i = 0; i < gridWidth * gridHeight; i++)
+            grid[i] = 0;
+        for(const cv::Point& p : gridPoints)
+            grid[p.y * gridWidth + p.x] = 1;
+
+        // === Find the optimal grid === //
         int bestScore = 0;
         cv::Point bestPoint(0, 0);
 
-        if(!distinctRects.empty()){
-            // Get the bouding box of all the rectangles
-            cv::Point center(boundingBox.x + boundingBox.width / 2, boundingBox.y + boundingBox.height / 2);
-            // Rotate all the rectangles around the center of this bounding box
-            // Just grab the first angle, should work fine;
-            double angleNorm = maths::normalizeAngle90(-distinctRects.front().angle);
-            cv::Size size((int)avgRectSize, (int)avgRectSize);
-
-            // Calculate avg angle
-            double avgAngle = 0.0;
-            double angleOffset = distinctRects.front().angle;
-            for(const ExtendedRect& rect : distinctRects) {
-                std::cout << ((rect.angle-angleOffset)) << " -> " << (maths::normalizeAngle90(rect.angle-angleOffset)) << std::endl;
-                avgAngle += maths::normalizeAngle90(rect.angle - angleOffset);
-            }
-            avgAngle /= distinctRects.size();
-            avgAngle += angleOffset;
-            angleNorm = avgAngle;
-            rotationAngle = avgAngle;
-
-
-            Cluster<cv::Rect> rotatedRects;
-            for(const ExtendedRect& rect : distinctRects){
-                cv::Point newPoint = rotatePointAroundPoint(rect.tl(), center, -angleNorm);
-                rotatedRects.emplace_back(newPoint, size);
-            }
-
-            // Get the bounding box of the rotated squares
-            // Normalize all rotated squares to position (0, 0);
-            cv::Rect box = getBoundingBox(rotatedRects);
-            for (cv::Rect& rect : rotatedRects) {
-                rect.x -= box.x;
-                rect.y -= box.y;
-                cv::rectangle(workFrameClustering, rect, {0, 255, 0}, 3);
-            }
-            cv::rectangle(workFrameClustering, box, {0, 0, 255}, 3);
-
-            // Get the side of the grid
-            Cluster<cv::Point> gridPoints;
-            for (cv::Rect& rect : rotatedRects) {
-                int dx = (int)round(rect.x / avgRectSize);
-                int dy = (int)round(rect.y / avgRectSize);
-                gridWidth  = std::max(dx+1, gridWidth);
-                gridHeight = std::max(dy+1, gridHeight);
-
-                cv::Rect dRect(dx * avgRectSize, dy * avgRectSize, (int)avgRectSize, (int)avgRectSize);
-                cv::rectangle(workFrameClustering, dRect, {255, 0, 0}, 1);
-                gridPoints.emplace_back(dx, dy);
-            }
-
-            // Create and fill grid
-            int grid[gridWidth * gridHeight];
-            for(int i = 0; i < gridWidth * gridHeight; i++)
-                grid[i] = 0;
-            for(const cv::Point& p : gridPoints)
-                grid[p.y * gridWidth + p.x] = 1;
-
-            // Find optimal grid
-            std::cout << "[OptimalCube] gridSize=" << gridWidth << "x" << gridHeight << std::endl;
-            for(int x = 0; x < gridWidth; x++){
-            for(int y = 0; y < gridHeight; y++){
-
-                int score = 0;
-                for(int dx = x; dx < x + CUBE_SIZE && dx < gridWidth; dx++){
-                for(int dy = y; dy < y + CUBE_SIZE && dy < gridHeight; dy++){
-                    score += grid[dy * gridWidth + dx];
-                }
-                }
-                if(bestScore < score){
-                    bestScore = score;
-                    bestPoint.x = x;
-                    bestPoint.y = y;
-                }
-//                std::cout << "[OptimalCube] at " << x << "," << y << " score=" << score << std::endl;
+        std::cout << "[OptimalCube] gridSize=" << gridWidth << "x" << gridHeight << std::endl;
+        for(int x = 0; x < gridWidth; x++){
+        for(int y = 0; y < gridHeight; y++){
+            int score = 0;
+            for(int dx = x; dx < x + CUBE_SIZE && dx < gridWidth; dx++){
+            for(int dy = y; dy < y + CUBE_SIZE && dy < gridHeight; dy++){
+                score += grid[dy * gridWidth + dx];
             }
             }
-
-            // Reset frame
-            frame_og.copyTo(frame);
-
-            // Create rotatedRects
-            Cluster<cv::Point> gridRects;
-            for(int x = 0; x < CUBE_SIZE; x++) {
-            for(int y = 0; y < CUBE_SIZE; y++) {
-                cv::Point p(x, y);  // Create point in grid
-                p += bestPoint;     // Move to best place
-                p *= avgRectSize;   // Move from grid to real
-                p += box.tl();      // Move back into bounding box;
-                p = rotatePointAroundPoint(p, center, angleNorm); // Rotate back to original place
-                // Draw
-                ExtendedRect r(cv::Rect(p, size), avgRectSize, angleNorm);
-                DrawRotatedRectangle(frame, r);
-            }
+            if(bestScore < score){
+                bestScore = score;
+                bestPoint.x = x;
+                bestPoint.y = y;
             }
         }
+        }
 
-        writer.add(workFrameClustering, "Rects rotated | grid=" + std::to_string(gridWidth) + "x" + std::to_string(gridHeight) + " score=" + std::to_string(bestScore) + " angle=" + std::to_string(rotationAngle));
-        writer.add(frame);
+        // Create new rects
+        Cluster<ExtendedRect> gridRects;
+        for(int x = 0; x < CUBE_SIZE; x++) {
+        for(int y = 0; y < CUBE_SIZE; y++) {
+            cv::Point p(x, y);  // Create point in grid
+            p += bestPoint;     // Move to best place
+            p *= rectSizeNorm;  // Move from grid to real
+            p += box.tl();      // Move back into bounding box;
+            p = rotatePointAroundPoint(p, gridCenter, rectAngleNorm); // Rotate back to original place
 
-        if(CUBE_SIZE * CUBE_SIZE - CUBE_SIZE <= bestScore){
-            frameMask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
-            cv::Point p1 = boundingBox.tl() - cv::Point(boundingBox.width/2, boundingBox.width/2);
-            cv::Point p2 = p1 + cv::Point(boundingBox.width*2, boundingBox.width*2);
+            cv::Rect r(p, cv::Size(rectSizeNorm, rectSizeNorm));
+            gridRects.emplace_back(r, y * CUBE_SIZE + x, rectSizeNorm, rectAngleNorm);
+        }
+        }
 
-            cv::rectangle(frameMask, p1, p2, 255, -1);
+        if(true){
+            frame_og.copyTo(imshowFrame);
+//            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
+            for(const ExtendedRect& rect : gridRects)
+                DrawRotatedRectangle(imshowFrame, rect);
+            writer.add(imshowFrame, "Grid @time=" + std::to_string(tTotal.now()));
+        }
+//
+//        if(CUBE_SIZE * CUBE_SIZE - CUBE_SIZE <= bestScore){
+//            frameMask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
+//            cv::Point p1 = boundingBox.tl() - cv::Point(boundingBox.width/2, boundingBox.width/2);
+//            cv::Point p2 = p1 + cv::Point(boundingBox.width*2, boundingBox.width*2);
+//
+//            cv::rectangle(frameMask, p1, p2, 255, -1);
 //            cv::imshow("frameMask", frameMask);
 //            cv::waitKey(0);
 //            cv::destroyAllWindows();
-        }else{
-
-        }
+//        }else{
+//
+//        }
 
 //        if(cv::waitKey(0) == 27 ) break; // esc
 

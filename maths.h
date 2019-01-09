@@ -7,8 +7,7 @@
 
 #include <tuple>
 #include <opencv2/opencv.hpp>
-
-using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
+#include "utils.h"
 
 namespace maths {
 

@@ -7,15 +7,24 @@ struct ExtendedRect : cv::Rect {
     double angle;
     double sizeNorm;
     int id;
+
     ExtendedRect(const cv::Rect& boundingBox, int id = 0, double sizeNorm = 0.0, double angle = 0.0)
-            : cv::Rect(boundingBox), id(id), sizeNorm(sizeNorm), angle(angle){};
+    : cv::Rect(boundingBox), id(id), sizeNorm(sizeNorm), angle(angle){};
+
+    bool operator < (const ExtendedRect& r) const {
+        return area() < r.area();
+    }
 };
 
+struct Line {
+    double distance;
+    double angle;
+    ExtendedRect r1;
+    ExtendedRect r2;
 
-
-
-
-using Line = std::tuple<int, const cv::Rect&, const cv::Rect&, double>;
+    Line(double distance, double angle, ExtendedRect& r1, ExtendedRect& r2)
+    : distance(distance), angle(angle), r1(r1), r2(r2){};
+};
 
 template<class T> using Cluster = std::vector<T>;
 template<class T> using SuperCluster = std::vector<std::vector<T>>;
@@ -31,6 +40,7 @@ public:
     void start();
     void stop();
     double get();
+    double now();
 };
 
 class VidWriter {
