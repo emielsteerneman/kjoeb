@@ -11,8 +11,8 @@
 #include "maths.h"
 
 const int CUBE_SIZE = 4;
-const int FRAME_WIDTH = 640;
-const int FRAME_HEIGHT = 360;
+const int FRAME_WIDTH = 1280;
+const int FRAME_HEIGHT = 720;
 
 // Generate a checkered pattern for performance testing
 void g(){
@@ -186,6 +186,11 @@ int main() {
         return 0;
     }
 
+//    if(!cap.open("/home/emiel/kjoebbbb.mkv")) {
+//        std::cout << "Could not open video" << std::endl;
+//        return 0;
+//    }
+
     cap.grab();
 
     const int LINE_MAX_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / CUBE_SIZE;
@@ -193,19 +198,19 @@ int main() {
     const int RECT_MAX_AREA   = LINE_MAX_LENGTH * LINE_MAX_LENGTH;
     const int RECT_MIN_AREA   = LINE_MIN_LENGTH * LINE_MIN_LENGTH;
 
-    std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
-    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
-    std::cout << "CAP_PROP_FPS          " << cap.get(cv::CAP_PROP_FPS) << std::endl;
-
-    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
-        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
-
-    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH))
-        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
-
-    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT))
-        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
-
+//    std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
+//    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
+//    std::cout << "CAP_PROP_FPS          " << cap.get(cv::CAP_PROP_FPS) << std::endl;
+//
+//    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
+//        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
+//
+//    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH))
+//        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
+//
+//    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT))
+//        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
+//
 //    if(!cap.set(cv::CAP_PROP_FPS, 60))
 //        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
 
@@ -219,19 +224,26 @@ int main() {
     std::vector<cv::Vec4i> hierarchy;
     Cluster<ExtendedRect> rectangles;
 
-//    int erosion_size = 1;
-//    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
-//            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
-//            cv::Point(erosion_size, erosion_size) );
+    int erosion_size = 1;
+    cv::Mat element = getStructuringElement(cv::MORPH_CROSS,
+            cv::Size(2 * erosion_size + 1, 2 * erosion_size + 1),
+            cv::Point(erosion_size, erosion_size) );
 
-    VidWriter writer("/home/emiel/Desktop/kjoeb/_kjoeb.mp4", 1600, 900, 3, 3, 1000 / 65);
+    VidWriter writer("/home/emiel/Desktop/kjoeb/kjoeb.mp4", 1600, 900, 3, 3, 1000 / 65);
+//    VidWriter writer("/home/emiel/Desktop/kjoeb/kjoeb.mp4", 1920, 1080, 3, 3, 1000 / 65);
+
 //    writer.disable();
 
     int nFrames = 0;
 
     std::cout << (frameMask.empty() ? "Empty!" : "Not empty!") << std::endl;
 
-    for(;;){
+    int delay = 0;
+    int timeout = 10;
+
+    cap.set(cv::CAP_PROP_POS_FRAMES, 180); nFrames = 180;
+
+    for(;;) {
         std::cout << std::endl;
         std::cout << "=== IMAGE PROCESSING ====" << std::endl;
 
@@ -241,21 +253,31 @@ int main() {
         writer.flush();
         writer.reset();
 
-        if(cv::waitKey(10) == 27 ) break; // esc
-
-//        if(10 * FPS < nFrames)
-//            break;
+        int key = cv::waitKey(delay);
+        if(key == 27)
+            break;
+        if(key == 32) // space
+            delay += timeout - 2 * delay;
+        if(key == 81){
+            delay = 0;
+            cap.set(cv::CAP_PROP_POS_FRAMES, cap.get(cv::CAP_PROP_POS_FRAMES) - 2);
+            nFrames -= 2;
+        }
 
         // === Capture frame
         t.start();
         bool isCaptured = cap.read(frame_og);
         frame_og.copyTo(frame);
+//        cv::resize(frame, frame, {640, 360});
         t.stop();
-        std::cout << "[capture]                time=" << t.get() << "ms nFrames=" << nFrames << std::endl;
+        std::cout << "[capture]                time=" << t.get() << "ms nFrames=" << nFrames << " res=" << frame_og.cols
+                  << "x" << frame_og.rows << std::endl;
 
         // === Skip empty frames
         if(frame.empty()){
             std::cout << "Frame is empty!" << std::endl;
+            cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+            nFrames = 0;
             continue;
         }
 
@@ -266,10 +288,17 @@ int main() {
         std::cout << "[TotalTime]              total time=" << tTotal.get() << "ms" << std::endl;
         tTotal.start();
 
+        cv::GaussianBlur(frame, workFrame, cv::Size(0, 0), 9);
+        cv::addWeighted(frame, 2.0, workFrame, -1.0, 0, workFrame);
+        writer.add(workFrame, "Sharpened Frame");
+        workFrame.copyTo(frame);
+
         // === Canny Edge Detection === //
         t.start();
         Canny(frame, workFrame, 60, 180, 3);
-//        workFrame = 255 - workFrame;
+        cv::dilate(workFrame, workFrame, element);
+        cv::dilate(workFrame, workFrame, element);
+        workFrame = 255 - workFrame;
 
         // === Apply frame mask === //
         if(!frameMask.empty())
@@ -285,6 +314,11 @@ int main() {
 
         // Sort rectangles by area
         std::sort(rectangles.begin(), rectangles.end());
+
+        for(const cv::Rect& r : rectangles){
+            std::cout << r.area() << std::endl;
+        }
+
 
         // Give each rectangle its own unique id
         for(int id = 0; id < rectangles.size(); id++)
@@ -305,7 +339,7 @@ int main() {
 
         /// Cluster rects by area
         SuperCluster<ExtendedRect> scByArea;
-        clustering::rectsByArea(rectangles, scByArea);
+        clustering::rectsByArea(rectangles, scByArea, 0.7);
         /// Select best cluster by variance score
         int iBestCluster = selecting::rectsByVarianceScore(scByArea, CUBE_SIZE, CUBE_SIZE * CUBE_SIZE * 3);
         if(iBestCluster == -1){
@@ -371,8 +405,8 @@ int main() {
                 for (const cv::Rect& rect : scByArea[i]) {
                     cv::Rect rect2;
                     rect2.x = rect.x / factor; rect2.y = rect.y / factor; rect2.width = rect.width / factor; rect2.height = rect.height / factor;
-                    cv::rectangle(workFrameClustering, rect2, {0, 255, 0}, 0);
-                    cv::putText(workFrameClustering, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
+                    cv::rectangle(imshowFrame, rect2, {0, 255, 0}, 0);
+                    cv::putText(imshowFrame, std::to_string(rect.area()), rect2.tl(), cv::FONT_HERSHEY_SIMPLEX, 0.5, {255, 255, 255});
                 }
                 double score = selecting::rectsVarianceScore(scByArea[i]);
                 std::string s;
@@ -578,27 +612,25 @@ int main() {
         }
 
         if(true){
-            frame_og.copyTo(imshowFrame);
+            frame.copyTo(imshowFrame);
 //            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
             for(const ExtendedRect& rect : gridRects)
                 DrawRotatedRectangle(imshowFrame, rect);
             writer.add(imshowFrame, "Grid @time=" + std::to_string(tTotal.now()));
         }
-//
-//        if(CUBE_SIZE * CUBE_SIZE - CUBE_SIZE <= bestScore){
-//            frameMask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
-//            cv::Point p1 = boundingBox.tl() - cv::Point(boundingBox.width/2, boundingBox.width/2);
-//            cv::Point p2 = p1 + cv::Point(boundingBox.width*2, boundingBox.width*2);
-//
-//            cv::rectangle(frameMask, p1, p2, 255, -1);
+
+        if(CUBE_SIZE * CUBE_SIZE - CUBE_SIZE <= bestScore){
+            frameMask = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC1);
+            cv::Point p1 = boundingBox.tl() - cv::Point(boundingBox.width/4, boundingBox.width/4);
+            cv::Point p2 = boundingBox.br() + cv::Point(boundingBox.width/4, boundingBox.width/4);
+
+            cv::rectangle(frameMask, p1, p2, 255, -1);
 //            cv::imshow("frameMask", frameMask);
 //            cv::waitKey(0);
 //            cv::destroyAllWindows();
-//        }else{
-//
-//        }
+        }else{
 
-//        if(cv::waitKey(0) == 27 ) break; // esc
+        }
 
         std::cout << std::endl;
     }

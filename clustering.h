@@ -16,7 +16,7 @@ namespace sorting {
 
 namespace clustering {
 
-    void rectsByArea(const Cluster <ExtendedRect> &rects, SuperCluster<ExtendedRect> &clusters);
+    void rectsByArea(const Cluster <ExtendedRect> &rects, SuperCluster<ExtendedRect> &clusters, double threshold = 0.8);
 
     void rectsByDistance(Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0);
 

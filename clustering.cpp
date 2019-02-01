@@ -15,7 +15,7 @@ namespace sorting {
 
 namespace clustering {
 
-    void rectsByArea(const Cluster<ExtendedRect>& rects, SuperCluster<ExtendedRect>& clusters){
+    void rectsByArea(const Cluster<ExtendedRect>& rects, SuperCluster<ExtendedRect>& clusters, double threshold){
         Timer t;
         t.start();
 
@@ -24,7 +24,7 @@ namespace clustering {
             for(auto& cluster : clusters){
                 for(const auto& rectComp : cluster){
                     if(found) break;
-                    if(maths::inRangeRel(rect.area(), rectComp.area(), 0.90)){    // Should be compared with average / median instead of all.
+                    if(maths::inRangeRel(rect.area(), rectComp.area(), threshold)){    // Should be compared with average / median instead of all.
                         found = true;
                         cluster.push_back(rect);
                     }
