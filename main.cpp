@@ -3,16 +3,28 @@
 #include "drawing.h"
 
 #include <iostream>
-#include <opencv2/opencv.hpp>
 #include <vector>
 #include <tuple>
 #include <numeric>
 #include <limits>
 #include "maths.h"
 
-const int CUBE_SIZE = 4;
-const int FRAME_WIDTH = 1280;
-const int FRAME_HEIGHT = 720;
+#include <opencv2/opencv.hpp>
+#include <opencv2/xfeatures2d.hpp>
+#include <opencv2/features2d.hpp>
+
+const int CUBE_SIZE = 3;
+const int FRAME_WIDTH = 640;
+const int FRAME_HEIGHT = 360;
+
+struct State {
+    double x = 0.0;
+    double y = 0.0;
+    double orientation = 0.0;
+    double size = 0.0;
+    int score = 0;
+    int progress = 0;
+};
 
 // Generate a checkered pattern for performance testing
 void g(){
@@ -202,15 +214,15 @@ int main() {
 //    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
 //    std::cout << "CAP_PROP_FPS          " << cap.get(cv::CAP_PROP_FPS) << std::endl;
 //
-//    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
-//        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
-//
-//    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH))
-//        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
-//
-//    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT))
-//        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
-//
+    if(!cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G')))
+        std::cout << "Could not set CAP_PROP_FOURCC" << std::endl;
+
+    if(!cap.set(cv::CAP_PROP_FRAME_WIDTH, FRAME_WIDTH))
+        std::cout << "Could not set CAP_PROP_FRAME_WIDTH" << std::endl;
+
+    if(!cap.set(cv::CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT))
+        std::cout << "Could not set CAP_PROP_FRAME_HEIGHT" << std::endl;
+
 //    if(!cap.set(cv::CAP_PROP_FPS, 60))
 //        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
 
@@ -231,7 +243,6 @@ int main() {
 
     VidWriter writer("/home/emiel/Desktop/kjoeb/kjoeb.mp4", 1600, 900, 3, 3, 1000 / 65);
 //    VidWriter writer("/home/emiel/Desktop/kjoeb/kjoeb.mp4", 1920, 1080, 3, 3, 1000 / 65);
-
 //    writer.disable();
 
     int nFrames = 0;
@@ -241,12 +252,21 @@ int main() {
     int delay = 0;
     int timeout = 10;
 
-    cap.set(cv::CAP_PROP_POS_FRAMES, 180); nFrames = 180;
+//    cap.set(cv::CAP_PROP_POS_FRAMES, 180); nFrames = 180;
+
+    State sPrev;
+    State sCurr;
+
+    // setup ORB
+    cv::Ptr<cv::Feature2D> orb = cv::ORB::create(64);
+    cv::Ptr<cv::DescriptorMatcher> matcher = cv::DescriptorMatcher::create("BruteForce-Hamming");
+    cv::Mat im1Gray, im2Gray, matCurr, matPrev, imMatches, matCurrM, matPrevM;
 
     for(;;) {
         std::cout << std::endl;
         std::cout << "=== IMAGE PROCESSING ====" << std::endl;
 
+        sPrev = sCurr;
         nFrames++;
 
         writer.show();
@@ -280,6 +300,84 @@ int main() {
             nFrames = 0;
             continue;
         }
+
+
+
+        if(!matPrev.empty()) {
+            // Convert images to grayscale
+            frame_og.copyTo(matCurr);
+            cvtColor(matCurr, im1Gray, cv::COLOR_BGR2GRAY);
+            cvtColor(matPrev, im2Gray, cv::COLOR_BGR2GRAY);
+
+            // === Apply frame mask === //
+            if(!frameMask.empty()){
+                im1Gray &= frameMask;
+                im2Gray &= frameMask;
+
+//                cv::threshold(matCurr, frameMask, 100, 255, cv::THRESH_BINARY);
+                matCurrM = cv::Scalar::all(0);
+                matPrevM = cv::Scalar::all(0);
+                matCurr.copyTo(matCurrM, frameMask);
+                matPrev.copyTo(matPrevM, frameMask);
+            }
+
+            // Variables to store keypoints and descriptors
+            std::vector<cv::KeyPoint> keypoints1, keypoints2;
+            cv::Mat descriptors1, descriptors2;
+
+            // Detect ORB features and compute descriptors.);
+            orb->detectAndCompute(im1Gray, cv::Mat(), keypoints1, descriptors1);
+            orb->detectAndCompute(im2Gray, cv::Mat(), keypoints2, descriptors2);
+
+//            cv::imshow("descriptors1", descriptors1);
+//            cv::waitKey(0);
+
+            // Match features.
+            std::vector<cv::DMatch> matches;
+            matcher->match(descriptors1, descriptors2, matches, cv::Mat());
+
+            // Sort matches by score
+            std::sort(matches.begin(), matches.end());
+
+            // Remove not so good matches
+            const int numGoodMatches = matches.size() * 0.30;
+            matches.erase(matches.begin() + numGoodMatches, matches.end());
+
+            std::vector<float> angles;
+            for(const cv::DMatch& match : matches){
+                const cv::KeyPoint& kpFrom = keypoints1[match.trainIdx];
+                const cv::KeyPoint& kpTo   = keypoints1[match.queryIdx];
+
+                float angleDiff = kpFrom.angle - kpTo.angle;
+//                std::cout << "    " << angleDiff << " " <<  kpFrom.angle << " " << kpTo.angle << std::endl;
+                angles.push_back(angleDiff);
+            }
+
+            std::sort(angles.begin(), angles.end());
+            for(float& angle : angles){
+                std::cout << angle << std::endl;
+            }
+
+            if(!frameMask.empty()) {
+                drawMatches(matCurrM, keypoints1, matPrevM, keypoints2, matches, imMatches);
+                writer.add(imMatches, "ORB");
+            }
+
+
+
+        }
+
+        frame_og.copyTo(matPrev);
+//        matPrev = frame_og.clone();
+//        continue;
+
+
+
+
+
+
+
+
 
         // Shrink frame
         // cv::resize(frame, frame, {FRAME_WIDTH, FRAME_HEIGHT});
@@ -350,7 +448,7 @@ int main() {
         /// Deduplicate rects of best cluster
         Cluster<ExtendedRect> cByArea;
         deduplicateRects(scByArea[iBestCluster], cByArea);
-        if(cByArea.empty()) continue;
+        if(cByArea.empty()) continue; // <-- Should never happen
 
         // Draw all clusters in scByArea in purple, chosen in green
         if(true) {
@@ -497,7 +595,7 @@ int main() {
             rect.angle = rectAngleNorm;
         }
 
-        // Get bounding box fo all rectangles
+        // Get bounding box for all rectangles
         cv::Rect boundingBox = getBoundingBox(distinctRects);
 
         // === Draw distinct rectangles and bounding box ===
@@ -579,7 +677,7 @@ int main() {
         int bestScore = 0;
         cv::Point bestPoint(0, 0);
 
-        std::cout << "[OptimalCube] gridSize=" << gridWidth << "x" << gridHeight << std::endl;
+        std::cout << "[OptimalCube]            gridSize=" << gridWidth << "x" << gridHeight << std::endl;
         for(int x = 0; x < gridWidth; x++){
         for(int y = 0; y < gridHeight; y++){
             int score = 0;
@@ -624,12 +722,33 @@ int main() {
             cv::Point p1 = boundingBox.tl() - cv::Point(boundingBox.width/4, boundingBox.width/4);
             cv::Point p2 = boundingBox.br() + cv::Point(boundingBox.width/4, boundingBox.width/4);
 
-            cv::rectangle(frameMask, p1, p2, 255, -1);
+//            p2 = boundingBox.tl() + cv::Point(rectSizeNorm * 3, rectSizeNorm * 3) + cv::Point(boundingBox.width/4, boundingBox.width/4);
+//            cv::rectangle(frameMask, p1, p2, 255, -1);
 //            cv::imshow("frameMask", frameMask);
 //            cv::waitKey(0);
 //            cv::destroyAllWindows();
-        }else{
 
+            cv::Scalar color = cv::Scalar(255.0, 255.0, 255.0); // white
+
+            // Create the rotated rectangle
+            cv::Point center = (boundingBox.tl() + boundingBox.br()) / 2;
+            cv::RotatedRect rotatedRect(center, cv::Size2f(rectSizeNorm*3, rectSizeNorm*3), rectAngleNorm * 57.2958);
+
+            // We take the edges that OpenCV calculated for us
+            cv::Point2f vertices2f[4];
+            rotatedRect.points(vertices2f);
+
+            // Convert them so we can use them in a fillConvexPoly
+            cv::Point vertices[4];
+            for(int i = 0; i < 4; ++i){
+                vertices[i] = vertices2f[i];
+            }
+
+            // Now we can fill the rotated rectangle with our specified color
+            cv::fillConvexPoly(frameMask, vertices, 4, 255);
+
+        }else{
+            cv::rectangle(frameMask, {0, 0}, {frameMask.cols, frameMask.rows}, 255, -1);
         }
 
         std::cout << std::endl;
