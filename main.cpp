@@ -13,9 +13,13 @@
 #include <opencv2/xfeatures2d.hpp>
 #include <opencv2/features2d.hpp>
 
-const int CUBE_SIZE = 3;
+const int CUBE_SIZE = 4;
 const int FRAME_WIDTH = 640;
 const int FRAME_HEIGHT = 360;
+const int RESCALE_FACTOR = 1;
+
+const bool drawByArea = false;
+const bool drawByAreaByDistanceBySelected = true;
 
 struct State {
     double x = 0.0;
@@ -85,7 +89,7 @@ cv::Point rotatePointAroundPoint(cv::Point p, cv::Point center, double angle){
     return cv::Point(xNew, yNew) + center;
 }
 
-cv::Rect getBoundingBox(const Cluster<cv::Rect> rects){
+cv::Rect getBoundingBox(const Cluster<cv::Rect>& rects){
     cv::Rect boundingBox;
     int xMin = 999999;
     int xMax = 0;
@@ -104,7 +108,7 @@ cv::Rect getBoundingBox(const Cluster<cv::Rect> rects){
     return boundingBox;
 }
 
-cv::Rect getBoundingBox(const Cluster<ExtendedRect> rects){
+cv::Rect getBoundingBox(const Cluster<ExtendedRect>& rects){
     cv::Rect boundingBox;
     int xMin = 999999;
     int xMax = 0;
@@ -152,37 +156,6 @@ void deduplicateRects(const Cluster<ExtendedRect>& in, Cluster<ExtendedRect>& ou
     std::cout << "[deduplicateRects]       time=" << t.get() << "ms " << in.size() << " -> " << out.size() << std::endl;
 }
 
-
-
-// ====================================================================================
-// ================================ SWEET SOFT DRAWING ================================
-// ====================================================================================
-
-void DrawRotatedRectangle(cv::Mat& image, const ExtendedRect& rect){
-    cv::Scalar color = cv::Scalar(255.0, 255.0, 255.0); // white
-
-    // Create the rotated rectangle
-    cv::Point centerPoint((int)(rect.x + rect.sizeNorm / 2), (int)(rect.y + rect.sizeNorm / 2));
-    cv::RotatedRect rotatedRectangle(centerPoint, {(float)rect.sizeNorm, (float)rect.sizeNorm}, (int)(rect.angle * 57.2958));
-
-    // We take the edges that OpenCV calculated for us
-    cv::Point2f vertices2f[4];
-    rotatedRectangle.points(vertices2f);
-
-    // Convert them so we can use them in a fillConvexPoly
-    cv::Point vertices[4];
-    for(int i = 0; i < 4; ++i){
-        vertices[i] = vertices2f[i];
-    }
-
-    for(int i = 0; i < 4; i++){
-        cv::line(image, vertices[i], vertices[(i+1)%4], color, 2);
-    }
-
-    // Now we can fill the rotated rectangle with our specified color
-//    cv::fillConvexPoly(image,vertices,4,color);
-}
-
 int main() {
     std::cout << "Hello, World!" << std::endl;
     std::cout << std::setprecision(2) << std::fixed;
@@ -205,10 +178,15 @@ int main() {
 
     cap.grab();
 
-    const int LINE_MAX_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / CUBE_SIZE;
-    const int LINE_MIN_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / (CUBE_SIZE * 4);
+    const int LINE_MAX_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / (CUBE_SIZE * RESCALE_FACTOR);
+    const int LINE_MIN_LENGTH = std::min(FRAME_WIDTH, FRAME_HEIGHT) / (CUBE_SIZE * RESCALE_FACTOR * 6);
     const int RECT_MAX_AREA   = LINE_MAX_LENGTH * LINE_MAX_LENGTH;
     const int RECT_MIN_AREA   = LINE_MIN_LENGTH * LINE_MIN_LENGTH;
+
+    std::cout << "LINE_MAX_LENGTH " << LINE_MAX_LENGTH << std::endl;
+    std::cout << "LINE_MIN_LENGTH " << LINE_MIN_LENGTH << std::endl;
+    std::cout << "RECT_MAX_AREA   " << RECT_MAX_AREA << std::endl;
+    std::cout << "RECT_MIN_AREA   " << RECT_MIN_AREA << std::endl;
 
 //    std::cout << "CAP_PROP_FRAME_WIDTH  " << cap.get(cv::CAP_PROP_FRAME_WIDTH) << std::endl;
 //    std::cout << "CAP_PROP_FRAME_HEIGHT " << cap.get(cv::CAP_PROP_FRAME_HEIGHT) << std::endl;
@@ -225,9 +203,6 @@ int main() {
 
 //    if(!cap.set(cv::CAP_PROP_FPS, 60))
 //        std::cout << "Could not set CAP_PROP_FPS" << std::endl;
-
-    std::cout << "RECT_MIN_AREA         " << RECT_MIN_AREA << std::endl;
-    std::cout << "RECT_MAX_AREA         " << RECT_MAX_AREA << std::endl;
 
     cv::Mat frame, frame_og, frameMask, workFrame, workFrameClustering, imshowFrame, mask;
     cv::Mat channels[3];
@@ -288,7 +263,7 @@ int main() {
         t.start();
         bool isCaptured = cap.read(frame_og);
         frame_og.copyTo(frame);
-//        cv::resize(frame, frame, {640, 360});
+//        cv::resize(frame, frame, {FRAME_WIDTH / RESCALE_FACTOR, FRAME_HEIGHT / RESCALE_FACTOR});
         t.stop();
         std::cout << "[capture]                time=" << t.get() << "ms nFrames=" << nFrames << " res=" << frame_og.cols
                   << "x" << frame_og.rows << std::endl;
@@ -303,9 +278,31 @@ int main() {
 
 
 
+
+
+
+
+        // Shrink frame
+        tTotal.stop();
+        writer.add(frame, "Original Frame | @time=" + std::to_string(tTotal.now()) + "  " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
+        std::cout << "[TotalTime]              total time=" << tTotal.get() << "ms" << std::endl;
+        tTotal.start();
+
+        cv::GaussianBlur(frame, frame, cv::Size(3, 3), 9);
+//        cv::addWeighted(frame, 2.0, workFrame, -1.0, 0, workFrame);
+        writer.add(frame, "Sharpened Frame");
+//        workFrame.copyTo(frame);
+
+
+
+
+
+
+
+
         if(!matPrev.empty()) {
             // Convert images to grayscale
-            frame_og.copyTo(matCurr);
+            frame.copyTo(matCurr);
             cvtColor(matCurr, im1Gray, cv::COLOR_BGR2GRAY);
             cvtColor(matPrev, im2Gray, cv::COLOR_BGR2GRAY);
 
@@ -344,19 +341,29 @@ int main() {
             matches.erase(matches.begin() + numGoodMatches, matches.end());
 
             std::vector<float> angles;
+            std::vector<float> distances;
             for(const cv::DMatch& match : matches){
                 const cv::KeyPoint& kpFrom = keypoints1[match.trainIdx];
                 const cv::KeyPoint& kpTo   = keypoints1[match.queryIdx];
 
                 float angleDiff = kpFrom.angle - kpTo.angle;
-//                std::cout << "    " << angleDiff << " " <<  kpFrom.angle << " " << kpTo.angle << std::endl;
                 angles.push_back(angleDiff);
+
+                float dx = kpFrom.pt.x - kpTo.pt.x;
+                float dy = kpFrom.pt.y - kpTo.pt.y;
+                float distanceDiff = sqrt(dx*dx + dy*dy);
+                distances.push_back(distanceDiff);
+
+                printf("angle=%8.3f ", angleDiff);
+                printf("dist=%8.3f \n", distanceDiff);
+//                std::cout << "    " << angleDiff << " " <<  kpFrom.angle << " " << kpTo.angle << std::endl;
             }
 
-            std::sort(angles.begin(), angles.end());
-            for(float& angle : angles){
-                std::cout << angle << std::endl;
-            }
+//            std::sort(angles.begin(), angles.end());
+
+//            for(float& angle : angles){
+//                std::cout << angle << std::endl;
+//            }
 
             if(!frameMask.empty()) {
                 drawMatches(matCurrM, keypoints1, matPrevM, keypoints2, matches, imMatches);
@@ -367,29 +374,13 @@ int main() {
 
         }
 
-        frame_og.copyTo(matPrev);
+        frame.copyTo(matPrev);
 //        matPrev = frame_og.clone();
 //        continue;
 
 
 
 
-
-
-
-
-
-        // Shrink frame
-        // cv::resize(frame, frame, {FRAME_WIDTH, FRAME_HEIGHT});
-        tTotal.stop();
-        writer.add(frame, "Original Frame | @time=" + std::to_string(tTotal.now()) + "  " + std::to_string(nFrames) + " " + std::to_string(tTotal.get()) + "ms");
-        std::cout << "[TotalTime]              total time=" << tTotal.get() << "ms" << std::endl;
-        tTotal.start();
-
-        cv::GaussianBlur(frame, workFrame, cv::Size(0, 0), 9);
-        cv::addWeighted(frame, 2.0, workFrame, -1.0, 0, workFrame);
-        writer.add(workFrame, "Sharpened Frame");
-        workFrame.copyTo(frame);
 
         // === Canny Edge Detection === //
         t.start();
@@ -413,9 +404,9 @@ int main() {
         // Sort rectangles by area
         std::sort(rectangles.begin(), rectangles.end());
 
-        for(const cv::Rect& r : rectangles){
-            std::cout << r.area() << std::endl;
-        }
+//        for(const cv::Rect& r : rectangles){
+//            std::cout << r.area() << std::endl;
+//        }
 
 
         // Give each rectangle its own unique id
@@ -451,12 +442,16 @@ int main() {
         if(cByArea.empty()) continue; // <-- Should never happen
 
         // Draw all clusters in scByArea in purple, chosen in green
-        if(true) {
+        if(drawByArea) {
             imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
             drawSuperCluster(imshowFrame, scByArea);
             drawCluster(imshowFrame, cByArea, {0, 255, 0}, 3);
             writer.add(imshowFrame, "By area @time=" + std::to_string(tTotal.now()) + " nC=" + std::to_string(scByArea.size()) + " area=" + std::to_string(cByArea.front().area()));
         }
+
+        // AVERAGE AREA OF RECT HERE!
+        double avgArea = 0.0;
+
 
         /// Cluster rects by distance -> lines
         SuperCluster<Line> scByDistance;
@@ -475,11 +470,11 @@ int main() {
 
         /// Cluster lines by angle
         SuperCluster<Line> linesByAngle;
-        clustering::linesByAngle(linesByDistance, linesByAngle);
+        clustering::linesByAngle(linesByDistance, linesByAngle, 0.2);
         Cluster<Line> bestLines = linesByAngle.back();
 
         // === Draw all rectangles, lines, and selected lines ===
-        if(true) {
+        if(drawByAreaByDistanceBySelected) {
             imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
             // Draw rectangles by area in white
             drawCluster(imshowFrame, cByArea, {255, 255, 255});
@@ -711,7 +706,6 @@ int main() {
 
         if(true){
             frame.copyTo(imshowFrame);
-//            imshowFrame = cv::Mat::zeros(frame.rows, frame.cols, CV_8UC3);
             for(const ExtendedRect& rect : gridRects)
                 DrawRotatedRectangle(imshowFrame, rect);
             writer.add(imshowFrame, "Grid @time=" + std::to_string(tTotal.now()));
@@ -732,7 +726,7 @@ int main() {
 
             // Create the rotated rectangle
             cv::Point center = (boundingBox.tl() + boundingBox.br()) / 2;
-            cv::RotatedRect rotatedRect(center, cv::Size2f(rectSizeNorm*3, rectSizeNorm*3), rectAngleNorm * 57.2958);
+            cv::RotatedRect rotatedRect(center, cv::Size2f(rectSizeNorm*CUBE_SIZE, rectSizeNorm*CUBE_SIZE), rectAngleNorm * 57.2958);
 
             // We take the edges that OpenCV calculated for us
             cv::Point2f vertices2f[4];
@@ -750,6 +744,7 @@ int main() {
         }else{
             cv::rectangle(frameMask, {0, 0}, {frameMask.cols, frameMask.rows}, 255, -1);
         }
+//        cv::rectangle(frameMask, {0, 0}, {frameMask.cols, frameMask.rows}, 255, -1);
 
         std::cout << std::endl;
     }
