@@ -90,12 +90,12 @@ namespace clustering {
         std::cout << "[clusterRectsByDistance] time=" << t.get() << "ms rects=" << rects.size() << " lines=" << lines.size() << " clusters=" << clusters.size() << std::endl;
     }
 
-    void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters){
+    void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters, double threshold){
         Timer t;
         t.start();
 
         double pi_step = M_PI / 4;
-        double pi_threshold = pi_step * 0.05;
+        double pi_threshold = pi_step * threshold;
 
         for(const Line& line : lines){
             bool found = false;

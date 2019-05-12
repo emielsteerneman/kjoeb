@@ -20,7 +20,7 @@ namespace clustering {
 
     void rectsByDistance(Cluster<ExtendedRect> &rects, SuperCluster<Line> &clusters, double threshold = 0.9, int maxDistance = std::numeric_limits<int>::max(), int minDistance = 0);
 
-    void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters);
+    void linesByAngle(const Cluster<Line>& lines, SuperCluster<Line> &clusters, double threshold = 0.05);
 }
 
 namespace selecting {
