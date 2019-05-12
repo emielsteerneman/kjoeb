@@ -39,3 +39,28 @@ void drawSuperCluster(cv::Mat& frame, const SuperCluster<Line>& superCluster){
         drawCluster(frame, superCluster[i], {iColour, 0, iColour});
     }
 }
+
+void DrawRotatedRectangle(cv::Mat& image, const ExtendedRect& rect, int thickness){
+    cv::Scalar color = cv::Scalar(255.0, 255.0, 255.0); // white
+
+    // Create the rotated rectangle
+    cv::Point centerPoint((int)(rect.x + rect.sizeNorm / 2), (int)(rect.y + rect.sizeNorm / 2));
+    cv::RotatedRect rotatedRectangle(centerPoint, {(float)rect.sizeNorm, (float)rect.sizeNorm}, (int)(rect.angle * 57.2958));
+
+    // We take the edges that OpenCV calculated for us
+    cv::Point2f vertices2f[4];
+    rotatedRectangle.points(vertices2f);
+
+    // Convert them so we can use them in a fillConvexPoly
+    cv::Point vertices[4];
+    for(int i = 0; i < 4; ++i){
+        vertices[i] = vertices2f[i];
+    }
+
+    for(int i = 0; i < 4; i++){
+        cv::line(image, vertices[i], vertices[(i+1)%4], color, 1);
+    }
+
+    // Now we can fill the rotated rectangle with our specified color
+//    cv::fillConvexPoly(image,vertices,4,color);
+}
